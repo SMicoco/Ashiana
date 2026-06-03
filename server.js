@@ -17,6 +17,9 @@ const jwt          = require('jsonwebtoken');
 const Database     = require('better-sqlite3');
 const path         = require('path');
 const fs           = require('fs');
+let   Anthropic    = null;
+try   { Anthropic   = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk').Anthropic; }
+catch { /* SDK absent: /api/ask returns a friendly error */ }
 
 const PORT       = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-long-random-string';
@@ -351,17 +354,101 @@ app.get('/api/admin/export.csv', requireAuth, (req, res) => {
   return res.send(csv);
 });
 
+// ---------- Ask Ashiana: AI chatbot with web search (Anthropic Claude) ----------
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const anthropic = (Anthropic && ANTHROPIC_API_KEY) ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) : null;
+
+const ASHIANA_SYSTEM_PROMPT = `You are "Ask Ashiana", a friendly assistant on the Ashiana Sheffield website.
+Ashiana Sheffield is a UK charity (Registered Charity 1120401) that supports BAMER (Black, Asian, Minority Ethnic, Refugee) women and girls experiencing domestic abuse, forced marriage, FGM, honour-based violence, and human trafficking.
+
+Your job:
+1. Answer questions about what Ashiana is currently doing: events, campaigns, services, news, partnerships, fundraising, training, and ongoing work.
+2. ALWAYS use the web_search tool to get current information before answering. Search for "Ashiana Sheffield <topic>" or include their site domain.
+3. Cite the sources you used at the end of your answer ("Sources:" line with URL list).
+
+SAFEGUARDING RULES (NON-NEGOTIABLE):
+- If anyone describes being in immediate danger or unsafe right now, your FIRST line must be:
+  "If you are in immediate danger, please call 999 now. If it is not safe to speak, dial 999 and press 55."
+- Always include the National Domestic Abuse Helpline (0808 2000 247, free, 24/7) when discussing crisis support.
+- Always include Ashiana's helpline (0114 255 5740, Monday to Friday 9am to 5pm) when relevant.
+- DO NOT give tactical advice on "how to leave an abuser", financial planning, immigration, or legal action. Direct the person to a specialist worker by submitting the Get Help form on this website, or by calling the helplines.
+- DO NOT speculate. If the web search returns nothing relevant, say so honestly and recommend the visitor contact Ashiana directly.
+- Never share personal data, addresses of refuges, or any information that could compromise a survivor's safety.
+
+Style:
+- Warm, plain English, short paragraphs.
+- 150 words maximum unless asked for more detail.
+- Never use em dashes.`;
+
+const ASK_PROMPT_MAX_LEN = 800;
+
+// very small per-IP rate limit to protect the API budget
+const askBuckets = new Map(); // ip -> { count, resetAt }
+function rateLimited(ip) {
+  const now = Date.now();
+  const WINDOW_MS = 60 * 60 * 1000;     // 1 hour window
+  const MAX_PER_WINDOW = 12;            // 12 questions per IP per hour
+  const b = askBuckets.get(ip);
+  if (!b || b.resetAt < now) { askBuckets.set(ip, { count: 1, resetAt: now + WINDOW_MS }); return false; }
+  if (b.count >= MAX_PER_WINDOW) return true;
+  b.count += 1;
+  return false;
+}
+
+app.post('/api/ask', async (req, res) => {
+  if (!anthropic) {
+    return res.status(503).json({ ok:false, error:'AI service is not configured on this server yet.' });
+  }
+  const ip = getClientIp(req);
+  if (rateLimited(ip)) {
+    return res.status(429).json({ ok:false, error:'Too many questions in a short time. Please try again later, or call the Ashiana helpline on 0114 255 5740.' });
+  }
+
+  const question = String((req.body && req.body.question) || '').trim().slice(0, ASK_PROMPT_MAX_LEN);
+  if (!question) return res.status(400).json({ ok:false, error:'Please type a question.' });
+
+  try {
+    const response = await anthropic.messages.create({
+      model: process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      system: ASHIANA_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: question }],
+      tools: [{
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: 3,
+      }],
+    });
+
+    // Concatenate text blocks, collect citations
+    let answer = '';
+    const citations = [];
+    for (const block of (response.content || [])) {
+      if (block.type === 'text') answer += block.text;
+      if (block.citations) {
+        for (const c of block.citations) {
+          if (c.url && !citations.find(x => x.url === c.url)) {
+            citations.push({ url: c.url, title: c.title || c.url });
+          }
+        }
+      }
+    }
+    answer = answer.trim();
+    return res.json({ ok:true, answer, citations });
+  } catch (err) {
+    console.error("Ask endpoint error:", err.message);
+    return res.status(500).json({ ok:false, error:"AI is unavailable right now. Please call 0114 255 5740." });
+  }
+});
+
 // Health check
 app.get('/api/health', (req, res) => res.json({ ok:true, time: new Date().toISOString() }));
 
-// Root: serve admin login page
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+// Root serves admin login page
+app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
-// ---------- Start ----------
 app.listen(PORT, () => {
-  console.log(`Ashiana backend listening on http://localhost:${PORT}`);
-  console.log(`DB file: ${DB_PATH}`);
+  console.log('Ashiana backend listening on port', PORT);
+  console.log('DB file:', DB_PATH);
   if (ALLOWED.length) console.log('CORS allowed origins:', ALLOWED);
 });
