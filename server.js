@@ -113,6 +113,55 @@ function requireAuth(req, res, next) {
 }
 const VALID_FORMS = new Set(['compliment','comment','complaint']);
 
+// ---------- Notification email (via FormSubmit) ----------
+// Sends a short notification to the three named recipients each time a new
+// submission arrives. We send via FormSubmit so no SMTP credentials are needed.
+// PRIMARY is already FormSubmit-confirmed; the other two arrive as CC.
+const NOTIFY_PRIMARY = process.env.NOTIFY_PRIMARY || 'D.Kaur@ashianasheffield.org';
+const NOTIFY_CC = process.env.NOTIFY_CC || 'nb@icocoassociates.co.uk,sm@icocoassociates.co.uk';
+const ADMIN_URL = process.env.ADMIN_URL || 'https://ashiana-backend.onrender.com/admin.html';
+
+const FORM_LABEL = {
+  compliment: { article: 'a',  word: 'compliment' },
+  comment:    { article: 'a',  word: 'comment'    },
+  complaint:  { article: 'a',  word: 'complaint'  },
+};
+
+async function notifyByEmail(formType, data) {
+  try {
+    const lbl = FORM_LABEL[formType] || { article: 'a', word: 'submission' };
+    const subject = `New ${lbl.word} received on Ashiana website`;
+    const payload = {
+      _subject: subject,
+      _template: 'table',
+      _captcha: 'false',
+      _cc: NOTIFY_CC,
+      'Form type':     formType,
+      'Submitted at':  new Date().toISOString(),
+      'Name':          data.name      || '(not given)',
+      'Email':         data.email     || '(not given)',
+      'Telephone':     data.telephone || '(not given)',
+      'Position':      data.position  || '',
+      'Stage':         data.stage     || '',
+      'Message':       data.message   || '',
+      'Outcome wanted':data.outcome   || '',
+      'Admin panel':   ADMIN_URL,
+      'Action':        `You have received ${lbl.article} new ${lbl.word} on the Ashiana website. Please log in to the admin panel above to view the full submission and respond.`,
+    };
+    const url = 'https://formsubmit.co/ajax/' + encodeURIComponent(NOTIFY_PRIMARY);
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) {
+      console.warn('Notification email returned non-OK:', r.status);
+    }
+  } catch (e) {
+    console.error('notifyByEmail failed:', e.message);
+  }
+}
+
 // ---------- Public endpoints ----------
 
 // POST /api/submit  (called by the website forms)
@@ -149,6 +198,12 @@ app.post('/api/submit', (req, res) => {
     ip:        getClientIp(req).slice(0, 64),
     ua:        String(req.headers['user-agent'] || '').slice(0, 400),
   });
+
+  // Fire-and-forget email notification. The visitor's response is not delayed
+  // by the FormSubmit round-trip; even if FormSubmit is slow or down, the
+  // submission is still safely stored in the database.
+  notifyByEmail(formType, body).catch(() => {});
+
   return res.json({ ok:true, id: info.lastInsertRowid });
 });
 
