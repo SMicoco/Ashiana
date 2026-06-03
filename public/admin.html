@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ashiana Admin Sign-in</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root{
+    --burgundy:#731F3A; --burgundy-dark:#5D1830; --bg:#FDFAF6;
+    --ink:#211B1F; --muted:#555055; --border:#E7DEE3; --red:#C43A55;
+  }
+  *{box-sizing:border-box}
+  body{font-family:'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--ink);
+       margin:0;min-height:100vh;display:grid;place-items:center;padding:24px}
+  .card{width:100%;max-width:420px;background:#fff;border:1px solid var(--border);
+        border-radius:16px;padding:36px 32px;
+        box-shadow:0 24px 60px -30px rgba(74,38,112,.22)}
+  .brand{text-align:center;color:var(--burgundy);font-weight:700;font-size:.74rem;
+         letter-spacing:.22em;text-transform:uppercase;margin-bottom:10px}
+  h1{font-family:'Cormorant Garamond',serif;color:var(--ink);font-weight:500;
+     font-size:1.9rem;margin:0 0 6px;text-align:center;line-height:1.2}
+  p.sub{text-align:center;color:var(--muted);font-size:.95rem;margin:0 0 26px}
+  label{display:block;font-weight:600;font-size:.92rem;margin:14px 0 6px}
+  input{width:100%;padding:12px 14px;border:1.5px solid #DCD3D7;border-radius:10px;
+        font-size:1rem;background:#fff;transition:border-color .2s,box-shadow .2s}
+  input:focus{outline:none;border-color:var(--burgundy);
+              box-shadow:0 0 0 3px rgba(115,31,58,.15)}
+  button{width:100%;margin-top:22px;background:var(--burgundy);color:#fff;
+         border:none;padding:13px;font-size:1rem;font-weight:600;border-radius:10px;
+         cursor:pointer;transition:background .15s,transform .15s}
+  button:hover{background:var(--burgundy-dark)}
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .msg{margin-top:14px;padding:10px 12px;border-radius:8px;font-size:.9rem;display:none}
+  .msg.err{display:block;background:#FDECEF;color:#80182B;border:1px solid #F3B8C2}
+  .footer{text-align:center;font-size:.8rem;color:var(--muted);margin-top:22px}
+</style>
+</head>
+<body>
+  <form class="card" id="login">
+    <div class="brand">Ashiana Sheffield</div>
+    <h1>Admin sign-in</h1>
+    <p class="sub">Form submissions database</p>
+
+    <label for="u">Username</label>
+    <input id="u" name="username" autocomplete="username" required>
+
+    <label for="p">Password</label>
+    <input id="p" name="password" type="password" autocomplete="current-password" required>
+
+    <button type="submit" id="btn">Sign in</button>
+    <div class="msg" id="msg"></div>
+
+    <div class="footer">
+      Authorised personnel only. All sign-ins are logged.
+    </div>
+  </form>
+
+<script>
+const form = document.getElementById('login');
+const btn  = document.getElementById('btn');
+const msg  = document.getElementById('msg');
+
+// If already signed in, jump straight to the dashboard
+fetch('/api/admin/me', { credentials:'include' })
+  .then(r => r.json())
+  .then(j => { if (j && j.ok) location.href = '/dashboard.html'; })
+  .catch(()=>{});
+
+form.addEventListener('submit', async function(e){
+  e.preventDefault();
+  msg.classList.remove('err'); msg.textContent='';
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  try {
+    const r = await fetch('/api/admin/login', {
+      method:'POST', credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        username: document.getElementById('u').value.trim(),
+        password: document.getElementById('p').value,
+      })
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || 'Sign-in failed');
+    location.href = '/dashboard.html';
+  } catch (err) {
+    msg.classList.add('err'); msg.textContent = err.message || 'Sign-in failed';
+    btn.disabled = false; btn.textContent = 'Sign in';
+  }
+});
+</script>
+</body>
+</html>

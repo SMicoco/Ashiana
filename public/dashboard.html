@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ashiana Admin Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<style>
+  :root{
+    --burgundy:#731F3A; --burgundy-dark:#5D1830; --bg:#FDFAF6;
+    --ink:#211B1F; --muted:#555055; --border:#E7DEE3; --soft:#F7F1F5;
+    --red:#C43A55; --green:#2A8A55;
+  }
+  *{box-sizing:border-box}
+  body{font-family:'Inter','Segoe UI',sans-serif;background:var(--bg);color:var(--ink);
+       margin:0;min-height:100vh}
+  header{background:#fff;border-bottom:1px solid var(--border);padding:14px 28px;
+         display:flex;align-items:center;gap:20px;flex-wrap:wrap;
+         box-shadow:0 1px 0 rgba(0,0,0,.02)}
+  header .brand{font-weight:700;color:var(--burgundy);letter-spacing:.16em;
+                text-transform:uppercase;font-size:.78rem}
+  header .title{font-family:'Cormorant Garamond',serif;font-weight:500;
+                font-size:1.5rem;flex:1}
+  header .who{color:var(--muted);font-size:.88rem}
+  header button.btn-link{background:none;border:none;color:var(--burgundy);
+                         cursor:pointer;font-size:.92rem;padding:6px 10px;
+                         border-radius:6px}
+  header button.btn-link:hover{background:var(--soft)}
+  main{padding:28px;max-width:1300px;margin:0 auto}
+
+  .tabs{display:flex;gap:6px;border-bottom:1px solid var(--border);margin-bottom:22px;
+        flex-wrap:wrap}
+  .tab{padding:12px 18px;background:none;border:none;font-size:.98rem;font-weight:600;
+       color:var(--muted);cursor:pointer;border-radius:8px 8px 0 0;
+       border-bottom:3px solid transparent;display:flex;align-items:center;gap:8px}
+  .tab:hover{color:var(--ink);background:var(--soft)}
+  .tab.active{color:var(--burgundy);border-bottom-color:var(--burgundy)}
+  .tab .count{background:var(--soft);color:var(--burgundy);font-weight:700;
+              padding:2px 8px;border-radius:99px;font-size:.78rem;min-width:24px;
+              text-align:center}
+  .tab.active .count{background:var(--burgundy);color:#fff}
+
+  .toolbar{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px;align-items:center}
+  .toolbar input[type=search]{flex:1;min-width:220px;padding:10px 14px;border:1.5px solid var(--border);
+        border-radius:10px;font-size:.95rem;background:#fff}
+  .toolbar input[type=search]:focus{outline:none;border-color:var(--burgundy);
+        box-shadow:0 0 0 3px rgba(115,31,58,.15)}
+  .btn{padding:10px 16px;border:none;border-radius:10px;font-weight:600;
+       font-size:.92rem;cursor:pointer;text-decoration:none;display:inline-block}
+  .btn-primary{background:var(--burgundy);color:#fff}
+  .btn-primary:hover{background:var(--burgundy-dark)}
+  .btn-secondary{background:#fff;color:var(--ink);border:1.5px solid var(--border)}
+  .btn-secondary:hover{background:var(--soft)}
+
+  .table-wrap{background:#fff;border:1px solid var(--border);border-radius:14px;
+              overflow:hidden;box-shadow:0 8px 24px -16px rgba(74,38,112,.12)}
+  table{width:100%;border-collapse:collapse}
+  th, td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--border);
+         font-size:.92rem;vertical-align:top}
+  th{background:var(--soft);color:var(--burgundy);font-weight:700;
+     font-size:.78rem;letter-spacing:.08em;text-transform:uppercase}
+  tbody tr:hover{background:var(--soft);cursor:pointer}
+  tr.unread td:first-child::before{
+    content:""; display:inline-block; width:8px; height:8px; border-radius:50%;
+    background:var(--burgundy); margin-right:8px; vertical-align:middle;
+  }
+  td.msg-col{max-width:380px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  td.actions{white-space:nowrap;text-align:right}
+  td.actions button{background:none;border:none;color:var(--muted);cursor:pointer;
+                    padding:4px 6px;font-size:.88rem;border-radius:6px}
+  td.actions button:hover{color:var(--burgundy);background:var(--soft)}
+
+  .pager{display:flex;gap:8px;justify-content:center;margin-top:18px;align-items:center}
+  .pager button{padding:8px 14px}
+  .pager .info{color:var(--muted);font-size:.9rem}
+
+  .empty{padding:60px 30px;text-align:center;color:var(--muted)}
+  .empty h2{font-family:'Cormorant Garamond',serif;font-weight:500;color:var(--ink);
+            margin:0 0 8px}
+
+  /* drawer */
+  .drawer-bg{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;z-index:40}
+  .drawer-bg.show{display:block}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(520px,92vw);
+          background:#fff;z-index:50;transform:translateX(100%);
+          transition:transform .25s cubic-bezier(.22,.61,.36,1);
+          display:flex;flex-direction:column;box-shadow:-8px 0 30px rgba(0,0,0,.18)}
+  .drawer.show{transform:translateX(0)}
+  .drawer header{position:sticky;top:0;background:#fff}
+  .drawer .body{padding:22px 26px;overflow-y:auto;flex:1}
+  .drawer .body h3{margin:0 0 6px;font-family:'Cormorant Garamond',serif;font-weight:500;font-size:1.6rem}
+  .drawer .body .when{color:var(--muted);font-size:.88rem;margin-bottom:18px}
+  .drawer .body dl{display:grid;grid-template-columns:130px 1fr;gap:6px 14px;margin:0}
+  .drawer .body dt{color:var(--muted);font-size:.85rem}
+  .drawer .body dd{margin:0;font-size:.95rem;word-break:break-word}
+  .drawer .body .message-block{margin-top:18px;padding:14px;background:var(--soft);
+                               border-radius:10px;white-space:pre-wrap;font-size:.95rem;line-height:1.5}
+  .drawer .actions{padding:14px 26px;border-top:1px solid var(--border);
+                   display:flex;gap:10px;flex-wrap:wrap}
+
+  /* change password modal */
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;
+            z-index:60;align-items:center;justify-content:center;padding:20px}
+  .modal-bg.show{display:flex}
+  .modal{background:#fff;border-radius:14px;padding:28px 30px;max-width:420px;width:100%}
+  .modal h2{margin:0 0 18px;font-family:'Cormorant Garamond',serif;font-weight:500}
+  .modal label{display:block;font-weight:600;font-size:.9rem;margin:12px 0 6px}
+  .modal input{width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;
+               border-radius:10px;font-size:1rem}
+  .modal .row{display:flex;gap:10px;margin-top:18px}
+  .modal .msg{margin-top:12px;padding:8px 10px;border-radius:8px;font-size:.88rem;display:none}
+  .modal .msg.err{display:block;background:#FDECEF;color:#80182B}
+  .modal .msg.ok{display:block;background:#E8F5EE;color:#1C5B35}
+
+  @media (max-width:720px){
+    main{padding:16px}
+    th,td{padding:10px 8px;font-size:.86rem}
+    td.msg-col{max-width:160px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Ashiana</span>
+  <span class="title">Form submissions</span>
+  <span class="who" id="who"></span>
+  <button class="btn-link" id="changePwdBtn">Change password</button>
+  <button class="btn-link" id="logoutBtn">Sign out</button>
+</header>
+
+<main>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-form="compliment">Compliments <span class="count" id="cnt-compliment">0</span></button>
+    <button class="tab" data-form="comment">Comments <span class="count" id="cnt-comment">0</span></button>
+    <button class="tab" data-form="complaint">Complaints <span class="count" id="cnt-complaint">0</span></button>
+  </nav>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Search by name, email, phone, message...">
+    <button class="btn btn-secondary" id="refreshBtn">Refresh</button>
+    <a class="btn btn-primary" id="exportBtn" href="#">Download CSV</a>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Submitted</th>
+          <th>Name</th>
+          <th>Contact</th>
+          <th>Position / Stage</th>
+          <th>Message</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <button class="btn btn-secondary" id="prevBtn" disabled>Previous</button>
+    <span class="info" id="pageInfo">Loading...</span>
+    <button class="btn btn-secondary" id="nextBtn" disabled>Next</button>
+  </div>
+</main>
+
+<!-- Drawer -->
+<div class="drawer-bg" id="drawerBg"></div>
+<aside class="drawer" id="drawer">
+  <header>
+    <span class="brand">Submission</span>
+    <span class="title" id="drawerTitle"></span>
+    <button class="btn-link" id="drawerClose">Close</button>
+  </header>
+  <div class="body" id="drawerBody"></div>
+  <div class="actions">
+    <button class="btn btn-secondary" id="markUnreadBtn">Mark unread</button>
+    <button class="btn btn-secondary" id="archiveBtn">Archive</button>
+    <button class="btn btn-secondary" id="deleteBtn" style="color:var(--red)">Delete</button>
+  </div>
+</aside>
+
+<!-- Change password modal -->
+<div class="modal-bg" id="pwdModalBg">
+  <div class="modal">
+    <h2>Change password</h2>
+    <label>Current password</label><input type="password" id="curPwd">
+    <label>New password (8+ characters)</label><input type="password" id="newPwd">
+    <label>Confirm new password</label><input type="password" id="newPwd2">
+    <div class="msg" id="pwdMsg"></div>
+    <div class="row">
+      <button class="btn btn-secondary" id="pwdCancel" style="flex:1">Cancel</button>
+      <button class="btn btn-primary"   id="pwdSave"   style="flex:1">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentForm = 'compliment';
+let page = 1;
+const pageSize = 25;
+let currentRow = null;
+
+function fmt(ts){
+  if (!ts) return '';
+  const d = new Date(ts.includes('T') ? ts : ts.replace(' ','T') + 'Z');
+  return d.toLocaleString('en-GB', { dateStyle:'medium', timeStyle:'short' });
+}
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]
+  ));
+}
+
+async function checkAuth(){
+  try {
+    const r = await fetch('/api/admin/me', { credentials:'include' });
+    const j = await r.json();
+    if (!j.ok) throw new Error();
+    document.getElementById('who').textContent = 'Signed in as ' + j.admin.username;
+  } catch (e) {
+    location.href = '/admin.html';
+  }
+}
+async function refreshCounts(){
+  const r = await fetch('/api/admin/counts', { credentials:'include' });
+  const j = await r.json();
+  if (!j.ok) return;
+  for (const k of ['compliment','comment','complaint']) {
+    const el = document.getElementById('cnt-' + k);
+    if (el) el.textContent = j.counts[k].total + (j.counts[k].unread ? ' (' + j.counts[k].unread + ' new)' : '');
+  }
+}
+async function load(){
+  const q = document.getElementById('search').value.trim();
+  const url = `/api/admin/submissions?form_type=${currentForm}&q=${encodeURIComponent(q)}&page=${page}&pageSize=${pageSize}`;
+  const r = await fetch(url, { credentials:'include' });
+  const j = await r.json();
+  const tbody = document.getElementById('tbody');
+  if (!j.ok) { tbody.innerHTML = '<tr><td colspan="6" class="empty">Could not load</td></tr>'; return; }
+  if (j.rows.length === 0){
+    tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><h2>Nothing here yet</h2><p>New submissions will appear here in real time.</p></div></td></tr>';
+  } else {
+    tbody.innerHTML = j.rows.map(row => `
+      <tr class="${row.is_read ? '' : 'unread'}" data-id="${row.id}">
+        <td>${escapeHtml(fmt(row.submitted_at))}</td>
+        <td>${escapeHtml(row.name)}</td>
+        <td>
+          ${row.email ? '<div>' + escapeHtml(row.email) + '</div>' : ''}
+          ${row.telephone ? '<div style="color:var(--muted)">' + escapeHtml(row.telephone) + '</div>' : ''}
+        </td>
+        <td>${escapeHtml(row.position || row.stage || '')}</td>
+        <td class="msg-col">${escapeHtml((row.message || '').slice(0, 140))}</td>
+        <td class="actions">
+          <button data-action="view" data-id="${row.id}">View</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+  const totalPages = Math.max(1, Math.ceil(j.total / pageSize));
+  document.getElementById('pageInfo').textContent = `Page ${j.page} of ${totalPages}  -  ${j.total} total`;
+  document.getElementById('prevBtn').disabled = j.page <= 1;
+  document.getElementById('nextBtn').disabled = j.page >= totalPages;
+
+  document.getElementById('exportBtn').href = `/api/admin/export.csv?form_type=${currentForm}`;
+}
+
+// Tab clicks
+document.getElementById('tabs').addEventListener('click', e => {
+  const t = e.target.closest('.tab');
+  if (!t) return;
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  t.classList.add('active');
+  currentForm = t.dataset.form;
+  page = 1; load();
+});
+document.getElementById('refreshBtn').addEventListener('click', ()=>{ refreshCounts(); load(); });
+document.getElementById('search').addEventListener('input', () => {
+  clearTimeout(window._st); window._st = setTimeout(()=>{ page=1; load(); }, 250);
+});
+document.getElementById('prevBtn').addEventListener('click', ()=>{ if (page>1){page--; load();} });
+document.getElementById('nextBtn').addEventListener('click', ()=>{ page++; load(); });
+
+// Row click -> open drawer
+document.getElementById('tbody').addEventListener('click', async e => {
+  const btn = e.target.closest('button[data-action="view"]') || e.target.closest('tr[data-id]');
+  if (!btn) return;
+  const tr = btn.closest('tr');
+  const id = tr.dataset.id;
+  await openDrawer(id);
+});
+
+async function openDrawer(id){
+  const r = await fetch(`/api/admin/submissions?form_type=${currentForm}&q=&page=1&pageSize=100`, { credentials:'include' });
+  const j = await r.json();
+  const row = j.rows.find(x => x.id == id) || null;
+  if (!row) return;
+  currentRow = row;
+  document.getElementById('drawerTitle').textContent = row.name || '(no name)';
+  document.getElementById('drawerBody').innerHTML = `
+    <h3>${escapeHtml(row.name || '(no name)')}</h3>
+    <div class="when">${escapeHtml(fmt(row.submitted_at))}</div>
+    <dl>
+      ${row.email     ? '<dt>Email</dt><dd>'   + escapeHtml(row.email)     + '</dd>' : ''}
+      ${row.telephone ? '<dt>Phone</dt><dd>'   + escapeHtml(row.telephone) + '</dd>' : ''}
+      ${row.position  ? '<dt>Position</dt><dd>'+ escapeHtml(row.position)  + '</dd>' : ''}
+      ${row.stage     ? '<dt>Stage</dt><dd>'   + escapeHtml(row.stage)     + '</dd>' : ''}
+      ${row.outcome   ? '<dt>Outcome</dt><dd>' + escapeHtml(row.outcome)   + '</dd>' : ''}
+    </dl>
+    <div class="message-block">${escapeHtml(row.message || '')}</div>
+  `;
+  document.getElementById('drawer').classList.add('show');
+  document.getElementById('drawerBg').classList.add('show');
+  // mark as read
+  if (!row.is_read){
+    fetch(`/api/admin/submissions/${row.id}/read`, { method:'POST', credentials:'include' });
+    row.is_read = 1;
+    setTimeout(()=>{ refreshCounts(); load(); }, 600);
+  }
+}
+function closeDrawer(){
+  document.getElementById('drawer').classList.remove('show');
+  document.getElementById('drawerBg').classList.remove('show');
+  currentRow = null;
+}
+document.getElementById('drawerClose').addEventListener('click', closeDrawer);
+document.getElementById('drawerBg').addEventListener('click', closeDrawer);
+document.getElementById('markUnreadBtn').addEventListener('click', async () => {
+  if (!currentRow) return;
+  await fetch(`/api/admin/submissions/${currentRow.id}/unread`, { method:'POST', credentials:'include' });
+  closeDrawer(); refreshCounts(); load();
+});
+document.getElementById('archiveBtn').addEventListener('click', async () => {
+  if (!currentRow) return;
+  if (!confirm('Archive this submission? It will be hidden from the list.')) return;
+  await fetch(`/api/admin/submissions/${currentRow.id}/archive`, { method:'POST', credentials:'include' });
+  closeDrawer(); refreshCounts(); load();
+});
+document.getElementById('deleteBtn').addEventListener('click', async () => {
+  if (!currentRow) return;
+  if (!confirm('PERMANENTLY DELETE this submission? This cannot be undone.')) return;
+  await fetch(`/api/admin/submissions/${currentRow.id}`, { method:'DELETE', credentials:'include' });
+  closeDrawer(); refreshCounts(); load();
+});
+
+// Logout
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await fetch('/api/admin/logout', { method:'POST', credentials:'include' });
+  location.href = '/admin.html';
+});
+
+// Change password
+const pwdModalBg = document.getElementById('pwdModalBg');
+document.getElementById('changePwdBtn').addEventListener('click', () => {
+  pwdModalBg.classList.add('show');
+  document.getElementById('pwdMsg').className = 'msg'; document.getElementById('pwdMsg').textContent='';
+  document.getElementById('curPwd').value=''; document.getElementById('newPwd').value=''; document.getElementById('newPwd2').value='';
+});
+document.getElementById('pwdCancel').addEventListener('click', () => pwdModalBg.classList.remove('show'));
+document.getElementById('pwdSave').addEventListener('click', async () => {
+  const cur = document.getElementById('curPwd').value;
+  const n1  = document.getElementById('newPwd').value;
+  const n2  = document.getElementById('newPwd2').value;
+  const m   = document.getElementById('pwdMsg');
+  m.className = 'msg'; m.textContent = '';
+  if (n1 !== n2) { m.className='msg err'; m.textContent='New passwords do not match'; return; }
+  if (n1.length < 8) { m.className='msg err'; m.textContent='New password must be at least 8 characters'; return; }
+  const r = await fetch('/api/admin/change-password', {
+    method:'POST', credentials:'include',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ currentPassword: cur, newPassword: n1 })
+  });
+  const j = await r.json();
+  if (!j.ok) { m.className='msg err'; m.textContent = j.error || 'Could not change password'; return; }
+  m.className='msg ok'; m.textContent='Password updated.';
+  setTimeout(()=> pwdModalBg.classList.remove('show'), 900);
+});
+
+// Boot
+checkAuth().then(() => { refreshCounts(); load(); });
+// Auto-refresh counts every 30s so new submissions show without clicking refresh
+setInterval(() => { refreshCounts(); }, 30000);
+</script>
+</body>
+</html>
