@@ -7,8 +7,8 @@
 <meta name="robots" content="noindex, nofollow">
 <style>
   :root{
-    --burgundy:#731F3A; --burgundy-dark:#5D1830; --bg:#FDFAF6;
-    --ink:#211B1F; --muted:#555055; --border:#E7DEE3; --soft:#F7F1F5;
+    --burgundy:#7a4f8e; --burgundy-dark:#5d3a6e; --bg:#faf6fc;
+    --ink:#211B1F; --muted:#555055; --border:#E7DEE3; --soft:#f3edf9;
     --red:#C43A55; --green:#2A8A55;
   }
   *{box-sizing:border-box}
@@ -44,7 +44,7 @@
   .toolbar input[type=search]{flex:1;min-width:220px;padding:10px 14px;border:1.5px solid var(--border);
         border-radius:10px;font-size:.95rem;background:#fff}
   .toolbar input[type=search]:focus{outline:none;border-color:var(--burgundy);
-        box-shadow:0 0 0 3px rgba(115,31,58,.15)}
+        box-shadow:0 0 0 3px rgba(122,79,142,.15)}
   .btn{padding:10px 16px;border:none;border-radius:10px;font-weight:600;
        font-size:.92rem;cursor:pointer;text-decoration:none;display:inline-block}
   .btn-primary{background:var(--burgundy);color:#fff}
@@ -109,7 +109,7 @@
                border-radius:10px;font-size:1rem}
   .modal .row{display:flex;gap:10px;margin-top:18px}
   .modal .msg{margin-top:12px;padding:8px 10px;border-radius:8px;font-size:.88rem;display:none}
-  .modal .msg.err{display:block;background:#FDECEF;color:#80182B}
+  .modal .msg.err{display:block;background:#FDECEF;color:#5d3a6e}
   .modal .msg.ok{display:block;background:#E8F5EE;color:#1C5B35}
 
   @media (max-width:720px){
@@ -133,8 +133,10 @@
     <button class="tab active" data-form="compliment">Compliments <span class="count" id="cnt-compliment">0</span></button>
     <button class="tab" data-form="comment">Comments <span class="count" id="cnt-comment">0</span></button>
     <button class="tab" data-form="complaint">Complaints <span class="count" id="cnt-complaint">0</span></button>
+    <button class="tab" data-form="news" style="margin-left:auto">News posts <span class="count" id="cnt-news">0</span></button>
   </nav>
 
+  <div id="submissionsPanel">
   <div class="toolbar">
     <input type="search" id="search" placeholder="Search by name, email, phone, message...">
     <button class="btn btn-secondary" id="refreshBtn">Refresh</button>
@@ -156,7 +158,18 @@
       <tbody id="tbody"></tbody>
     </table>
   </div>
-  <div class="pager">
+  </div>
+
+<!-- News posts panel (hidden by default) -->
+<div id="newsPanel" style="display:none">
+  <div class="toolbar" style="margin-bottom:18px"><h2 style="margin:0;font-family:'Cormorant Garamond',serif;font-weight:500;font-size:1.4rem;flex:1">Manage news posts shown on the public News page</h2><button class="btn btn-primary" id="addNewsBtn">+ New post</button></div>
+  <div class="table-wrap" style="margin-bottom:18px"><table><thead><tr><th>Published</th><th>Title</th><th>LinkedIn</th><th>Status</th><th></th></tr></thead><tbody id="newsTbody"></tbody></table></div>
+</div>
+
+<!-- News post editor modal -->
+<div class="modal-bg" id="newsModalBg"><div class="modal" style="max-width:640px"><h2 id="newsModalTitle">Add news post</h2><label>Title</label><input type="text" id="newsTitle" placeholder="e.g. Ashiana opens new outreach service"><label>Content (paste the post text from LinkedIn)</label><textarea id="newsContent" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem;font-family:inherit;min-height:160px;resize:vertical;line-height:1.55"></textarea><label>LinkedIn post URL (optional but recommended)</label><input type="url" id="newsLinkedIn" placeholder="https://www.linkedin.com/posts/..."><label>Publish status</label><select id="newsStatus" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem"><option value="1">Published (visible on public News page)</option><option value="0">Draft (not visible to public)</option></select><div class="msg" id="newsMsg"></div><div class="row"><button class="btn btn-secondary" id="newsCancel" style="flex:1">Cancel</button><button class="btn btn-primary" id="newsSave" style="flex:1">Save post</button></div></div></div>
+
+<div class="pager">
     <button class="btn btn-secondary" id="prevBtn" disabled>Previous</button>
     <span class="info" id="pageInfo">Loading...</span>
     <button class="btn btn-secondary" id="nextBtn" disabled>Next</button>
@@ -380,5 +393,122 @@ checkAuth().then(() => { refreshCounts(); load(); });
 // Auto-refresh counts every 30s so new submissions show without clicking refresh
 setInterval(() => { refreshCounts(); }, 30000);
 </script>
+
+<script id="news-admin-js">
+(function(){
+  var newsPanel = document.getElementById('newsPanel');
+  var subsPanel = document.getElementById('submissionsPanel');
+  var newsTbody = document.getElementById('newsTbody');
+  var modal     = document.getElementById('newsModalBg');
+  var titleEl   = document.getElementById('newsModalTitle');
+  var fTitle    = document.getElementById('newsTitle');
+  var fContent  = document.getElementById('newsContent');
+  var fLI       = document.getElementById('newsLinkedIn');
+  var fStatus   = document.getElementById('newsStatus');
+  var msgEl     = document.getElementById('newsMsg');
+  var editingId = null;
+
+  // Wire the new tab so it switches between panels
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click', function(){
+      var isNews = t.dataset.form === 'news';
+      if (isNews){
+        if (newsPanel) newsPanel.style.display = '';
+        if (subsPanel) subsPanel.style.display = 'none';
+        loadNewsPosts();
+      } else {
+        if (newsPanel) newsPanel.style.display = 'none';
+        if (subsPanel) subsPanel.style.display = '';
+      }
+    }, true);
+  });
+
+  function escapeHtml(s){return String(s == null ? '' : s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function fmt(ts){ if(!ts) return ''; try{ return new Date(ts.replace ? ts.replace(' ','T')+'Z' : ts).toLocaleString('en-GB',{dateStyle:'medium',timeStyle:'short'}); }catch(e){ return ts; } }
+
+  async function loadNewsPosts(){
+    var r = await fetch('/api/admin/news', { credentials:'include' });
+    var j = await r.json();
+    if (!j.ok){ newsTbody.innerHTML = '<tr><td colspan="5" class="empty">Could not load posts</td></tr>'; return; }
+    var cnt = document.getElementById('cnt-news'); if (cnt) cnt.textContent = j.posts.length;
+    if (!j.posts.length){
+      newsTbody.innerHTML = '<tr><td colspan="5"><div class="empty"><h2>No posts yet</h2><p>Click + New post to add Daljit\'s first LinkedIn update.</p></div></td></tr>';
+      return;
+    }
+    newsTbody.innerHTML = j.posts.map(function(p){
+      return '<tr data-id="'+p.id+'">'
+        + '<td>'+escapeHtml(fmt(p.published_at))+'</td>'
+        + '<td><strong>'+escapeHtml(p.title)+'</strong><div style="color:var(--muted);font-size:.85rem;margin-top:4px">'+escapeHtml((p.content||'').slice(0,90))+(p.content && p.content.length>90?'...':'')+'</div></td>'
+        + '<td>'+(p.linkedin_url ? '<a href="'+escapeHtml(p.linkedin_url)+'" target="_blank" style="color:var(--burgundy)">View</a>' : '<span style="color:var(--muted)">none</span>')+'</td>'
+        + '<td>'+(p.is_published ? '<span style="color:var(--green)">Published</span>' : '<span style="color:var(--muted)">Draft</span>')+'</td>'
+        + '<td class="actions"><button data-act="edit" data-id="'+p.id+'">Edit</button> <button data-act="del" data-id="'+p.id+'" style="color:var(--red)">Delete</button></td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  // Open modal for new post
+  document.getElementById('addNewsBtn').addEventListener('click', function(){
+    editingId = null;
+    titleEl.textContent = 'Add news post';
+    fTitle.value = ''; fContent.value = ''; fLI.value = ''; fStatus.value = '1';
+    msgEl.className = 'msg'; msgEl.textContent = '';
+    modal.classList.add('show');
+  });
+
+  // Row actions: edit / delete
+  newsTbody.addEventListener('click', async function(e){
+    var b = e.target.closest('button[data-act]');
+    if (!b) return;
+    var id = b.dataset.id;
+    if (b.dataset.act === 'edit'){
+      var r = await fetch('/api/admin/news', { credentials:'include' });
+      var j = await r.json();
+      var p = j.posts.find(function(x){ return x.id == id; });
+      if (!p) return;
+      editingId = id;
+      titleEl.textContent = 'Edit news post';
+      fTitle.value = p.title || '';
+      fContent.value = p.content || '';
+      fLI.value = p.linkedin_url || '';
+      fStatus.value = p.is_published ? '1' : '0';
+      msgEl.className = 'msg'; msgEl.textContent = '';
+      modal.classList.add('show');
+    } else if (b.dataset.act === 'del'){
+      if (!confirm('Delete this news post permanently?')) return;
+      await fetch('/api/admin/news/' + id, { method:'DELETE', credentials:'include' });
+      loadNewsPosts();
+    }
+  });
+
+  document.getElementById('newsCancel').addEventListener('click', function(){ modal.classList.remove('show'); });
+  document.getElementById('newsSave').addEventListener('click', async function(){
+    msgEl.className = 'msg'; msgEl.textContent = '';
+    var payload = {
+      title: fTitle.value.trim(),
+      content: fContent.value.trim(),
+      linkedin_url: fLI.value.trim(),
+      is_published: fStatus.value === '1',
+    };
+    if (!payload.title || !payload.content){
+      msgEl.className = 'msg err'; msgEl.textContent = 'Title and content are required.'; return;
+    }
+    var url = editingId ? '/api/admin/news/' + editingId : '/api/admin/news';
+    var method = editingId ? 'PUT' : 'POST';
+    var r = await fetch(url, {
+      method: method, credentials:'include',
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+    var j = await r.json();
+    if (!j.ok){ msgEl.className = 'msg err'; msgEl.textContent = j.error || 'Could not save'; return; }
+    msgEl.className = 'msg ok'; msgEl.textContent = 'Saved.';
+    setTimeout(function(){ modal.classList.remove('show'); loadNewsPosts(); }, 700);
+  });
+
+  // Make this discoverable for manual reloading from console
+  window.manageNewsPosts = loadNewsPosts;
+})();
+</script>
+
 </body>
 </html>
