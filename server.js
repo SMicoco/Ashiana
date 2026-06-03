@@ -58,6 +58,20 @@ db.exec(`
     is_archived INTEGER DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS news_posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    linkedin_url TEXT,
+    author_name TEXT DEFAULT 'Daljit Kaur',
+    author_role TEXT DEFAULT 'Ashiana Chair & Non-Executive Chief Officer (NECO)',
+    published_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_published INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_news_posts_published_at ON news_posts(published_at);
+
   CREATE INDEX IF NOT EXISTS idx_submissions_form_type ON submissions(form_type);
   CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at);
 `);
@@ -439,6 +453,69 @@ app.post('/api/ask', async (req, res) => {
     console.error("Ask endpoint error:", err.message);
     return res.status(500).json({ ok:false, error:"AI is unavailable right now. Please call 0114 255 5740." });
   }
+});
+
+// ---------- Public news feed (admin-curated, from DB) ----------
+app.get('/api/news', (req, res) => {
+  try {
+    const rows = db.prepare(
+      "SELECT id, title, content, linkedin_url, author_name, author_role, published_at " +
+      "FROM news_posts WHERE is_published = 1 ORDER BY published_at DESC LIMIT 6"
+    ).all();
+    const posts = rows.map(r => ({
+      title: r.title,
+      link: r.linkedin_url || '',
+      pubDate: r.published_at,
+      summary: (r.content || '').slice(0, 280),
+      content: r.content,
+      author: { name: r.author_name, role: r.author_role },
+    }));
+    return res.json({ ok:true, posts });
+  } catch (e) {
+    console.error('news fetch failed:', e.message);
+    return res.status(500).json({ ok:false, error:'Could not load news.' });
+  }
+});
+
+// ---------- Admin: news posts CRUD ----------
+app.get('/api/admin/news', requireAuth, (req, res) => {
+  const rows = db.prepare("SELECT id, title, content, linkedin_url, author_name, author_role, published_at, is_published FROM news_posts ORDER BY published_at DESC").all();
+  res.json({ ok:true, posts: rows });
+});
+app.post('/api/admin/news', requireAuth, (req, res) => {
+  const b = req.body || {};
+  if (!b.title || !b.content) return res.status(400).json({ ok:false, error:'Title and content are required' });
+  const info = db.prepare(
+    "INSERT INTO news_posts (title, content, linkedin_url, author_name, author_role, is_published) VALUES (?, ?, ?, ?, ?, ?)"
+  ).run(
+    String(b.title).slice(0, 300),
+    String(b.content).slice(0, 12000),
+    String(b.linkedin_url || '').slice(0, 600),
+    String(b.author_name || 'Daljit Kaur').slice(0, 120),
+    String(b.author_role || 'Ashiana Chair & Non-Executive Chief Officer (NECO)').slice(0, 200),
+    b.is_published === false ? 0 : 1
+  );
+  res.json({ ok:true, id: info.lastInsertRowid });
+});
+app.put('/api/admin/news/:id', requireAuth, (req, res) => {
+  const b = req.body || {};
+  if (!b.title || !b.content) return res.status(400).json({ ok:false, error:'Title and content are required' });
+  db.prepare(
+    "UPDATE news_posts SET title = ?, content = ?, linkedin_url = ?, author_name = ?, author_role = ?, is_published = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+  ).run(
+    String(b.title).slice(0, 300),
+    String(b.content).slice(0, 12000),
+    String(b.linkedin_url || '').slice(0, 600),
+    String(b.author_name || 'Daljit Kaur').slice(0, 120),
+    String(b.author_role || 'Ashiana Chair & Non-Executive Chief Officer (NECO)').slice(0, 200),
+    b.is_published === false ? 0 : 1,
+    req.params.id
+  );
+  res.json({ ok:true });
+});
+app.delete('/api/admin/news/:id', requireAuth, (req, res) => {
+  db.prepare("DELETE FROM news_posts WHERE id = ?").run(req.params.id);
+  res.json({ ok:true });
 });
 
 // Health check
