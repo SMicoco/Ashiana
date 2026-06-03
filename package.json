@@ -1,21 +1,19 @@
 {
   "name": "ashiana-backend",
-  "version": "1.0.0",
-  "description": "Backend for the Ashiana Sheffield website: stores Compliments / Comments / Complaints submissions in SQLite, exposes an admin dashboard.",
+  "version": "1.1.0",
   "main": "server.js",
-  "engines": {
-    "node": ">=18.0.0"
-  },
+  "engines": { "node": ">=18.0.0" },
   "scripts": {
     "start": "node server.js",
-    "dev":   "NODE_ENV=development node server.js"
+    "dev": "NODE_ENV=development node server.js"
   },
   "dependencies": {
-    "express":        "^4.19.2",
-    "cors":           "^2.8.5",
-    "cookie-parser":  "^1.4.6",
-    "bcryptjs":       "^2.4.3",
-    "jsonwebtoken":   "^9.0.2",
-    "better-sqlite3": "^11.1.2"
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "cookie-parser": "^1.4.6",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "better-sqlite3": "^11.1.2",
+    "@anthropic-ai/sdk": "^0.32.1"
   }
 }
