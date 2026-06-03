@@ -1,0 +1,7 @@
+node_modules/
+ashiana.db
+ashiana.db-wal
+ashiana.db-shm
+.env
+.DS_Store
+*.log

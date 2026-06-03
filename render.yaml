@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: ashiana-backend
+    runtime: node
+    plan: free                       # free tier (sleeps after 15min idle)
+    region: frankfurt                # EU region (closer to UK, GDPR-friendly)
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: ashiana-db
+      mountPath: /data
+      sizeGB: 1                      # SQLite database lives here, persists across restarts
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /data/ashiana.db
+      - key: JWT_SECRET
+        generateValue: true          # Render generates a strong random secret
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        sync: false                  # you set this manually in the Render dashboard
+      - key: ALLOWED_ORIGINS
+        sync: false                  # you set this once the frontend URL is known
