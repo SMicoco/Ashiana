@@ -20,6 +20,12 @@ const fs           = require('fs');
 let   Anthropic    = null;
 try   { Anthropic   = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk').Anthropic; }
 catch { /* SDK absent: /api/ask returns a friendly error */ }
+let   multer       = null;
+try   { multer       = require('multer'); }
+catch { /* multer absent: CV uploads will be skipped, text-only career forms still work */ }
+let   Resend       = null;
+try   { Resend       = require('resend').Resend; }
+catch { /* SDK absent: notifications will fall back to FormSubmit */ }
 
 const PORT       = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-long-random-string';
@@ -76,6 +82,34 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at);
 `);
 
+// ---- Career-route migration: ensure career columns exist (safe on re-run) ----
+function ensureColumn(table, name, type){
+  try {
+    const cols = db.prepare("PRAGMA table_info(" + table + ")").all().map(c => c.name);
+    if (!cols.includes(name)) {
+      db.exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + type);
+    }
+  } catch(e) { console.warn('migration skipped for', name, e.message); }
+}
+ensureColumn('submissions', 'role_applied',   'TEXT');
+ensureColumn('submissions', 'organisation',   'TEXT');
+ensureColumn('submissions', 'availability',   'TEXT');
+ensureColumn('submissions', 'right_to_work',  'TEXT');
+ensureColumn('submissions', 'references_text','TEXT');
+ensureColumn('submissions', 'where_heard',    'TEXT');
+ensureColumn('submissions', 'institution',    'TEXT');
+ensureColumn('submissions', 'course',         'TEXT');
+ensureColumn('submissions', 'year_of_study',  'TEXT');
+ensureColumn('submissions', 'placement_dates','TEXT');
+ensureColumn('submissions', 'why_volunteer',  'TEXT');
+ensureColumn('submissions', 'skills',         'TEXT');
+ensureColumn('submissions', 'linkedin_url',   'TEXT');
+ensureColumn('submissions', 'cv_link',        'TEXT');
+ensureColumn('submissions', 'cv_filename',    'TEXT');
+ensureColumn('submissions', 'cv_storedname',  'TEXT');
+ensureColumn('news_posts', 'images', 'TEXT'); // JSON array of {filename, storedname}
+
+
 // Seed default admin if no admins exist
 const adminCount = db.prepare('SELECT COUNT(*) AS n FROM admins').get().n;
 if (adminCount === 0) {
@@ -109,6 +143,45 @@ app.use(cors({
 // Static (admin login + dashboard pages)
 app.use(express.static(path.join(__dirname, 'public')));
 
+
+// ---- CV uploads setup ----
+const UPLOAD_DIR = process.env.UPLOAD_DIR || (DB_PATH.endsWith('.db') ? path.dirname(DB_PATH) + '/cv_uploads' : path.join(__dirname, 'cv_uploads'));
+try { fs.mkdirSync(UPLOAD_DIR, { recursive: true }); } catch(e) { console.warn('Could not create UPLOAD_DIR:', e.message); }
+
+const cvUploader = multer ? multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb){ cb(null, UPLOAD_DIR); },
+    filename: function (req, file, cb){
+      const safe = (file.originalname || 'cv').replace(/[^\w.\-]+/g, '_').slice(-80);
+      cb(null, Date.now() + '_' + Math.random().toString(36).slice(2,8) + '_' + safe);
+    }
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB max
+  fileFilter: function (req, file, cb){
+    const ok = /\.(pdf|doc|docx|odt|rtf|txt)$/i.test(file.originalname || '');
+    cb(ok ? null : new Error('Unsupported file type'), ok);
+  }
+}) : null;
+
+// ---- News post image uploads ----
+const NEWS_IMG_DIR = process.env.NEWS_IMG_DIR || (DB_PATH.endsWith('.db') ? path.dirname(DB_PATH) + '/news_images' : path.join(__dirname, 'news_images'));
+try { fs.mkdirSync(NEWS_IMG_DIR, { recursive: true }); } catch(e) { console.warn('Could not create NEWS_IMG_DIR:', e.message); }
+
+const newsImageUploader = multer ? multer({
+  storage: multer.diskStorage({
+    destination: function (req, file, cb){ cb(null, NEWS_IMG_DIR); },
+    filename: function (req, file, cb){
+      const safe = (file.originalname || 'img').replace(/[^\w.\-]+/g, '_').slice(-60);
+      cb(null, Date.now() + '_' + Math.random().toString(36).slice(2,8) + '_' + safe);
+    }
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max per image
+  fileFilter: function (req, file, cb){
+    const ok = /\.(jpg|jpeg|png|webp|gif)$/i.test(file.originalname || '');
+    cb(ok ? null : new Error('Unsupported image type'), ok);
+  }
+}) : null;
+
 // ---------- Helpers ----------
 function getClientIp(req) {
   return (req.headers['x-forwarded-for'] || '').split(',')[0].trim()
@@ -128,12 +201,16 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ ok:false, error:'Session expired, please sign in again' });
   }
 }
-const VALID_FORMS = new Set(['compliment','comment','complaint']);
+const VALID_FORMS = new Set(['compliment','comment','complaint','career','volunteer','student']);
 
 // ---------- Notification email (via FormSubmit) ----------
 // Sends a short notification to the three named recipients each time a new
 // submission arrives. We send via FormSubmit so no SMTP credentials are needed.
 // PRIMARY is already FormSubmit-confirmed; the other two arrive as CC.
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const RESEND_FROM    = process.env.RESEND_FROM    || 'Ashiana Website <onboarding@resend.dev>';
+const NOTIFY_RECIPIENTS = (process.env.NOTIFY_RECIPIENTS || 'D.Kaur@ashianasheffield.org,nb@icocoassociates.co.uk,sm@icocoassociates.co.uk').split(',').map(s => s.trim()).filter(Boolean);
+const resendClient = (Resend && RESEND_API_KEY) ? new Resend(RESEND_API_KEY) : null;
 const NOTIFY_PRIMARY = process.env.NOTIFY_PRIMARY || 'D.Kaur@ashianasheffield.org';
 const NOTIFY_CC = process.env.NOTIFY_CC || 'nb@icocoassociates.co.uk,sm@icocoassociates.co.uk';
 const ADMIN_URL = process.env.ADMIN_URL || 'https://ashiana-backend.onrender.com/admin.html';
@@ -142,40 +219,101 @@ const FORM_LABEL = {
   compliment: { article: 'a',  word: 'compliment' },
   comment:    { article: 'a',  word: 'comment'    },
   complaint:  { article: 'a',  word: 'complaint'  },
+  career:     { article: 'a',  word: 'job application' },
+  volunteer:  { article: 'a',  word: 'volunteer enquiry' },
+  student:    { article: 'a',  word: 'student placement enquiry' },
 };
 
 async function notifyByEmail(formType, data) {
+  const lbl = FORM_LABEL[formType] || { article: 'a', word: 'submission' };
+  const subject = `New ${lbl.word} received on Ashiana website`;
+
+  // Plain text body shared by both transports
+  const text = [
+    `A new ${lbl.word} was just submitted on the Ashiana Sheffield website.`,
+    ``,
+    `Name:      ${data.name      || '(not given)'}`,
+    `Email:     ${data.email     || '(not given)'}`,
+    `Telephone: ${data.telephone || data.phone || '(not given)'}`,
+    data.position      ? `Position:  ${data.position}`      : '',
+    data.stage         ? `Stage:     ${data.stage}`         : '',
+    data.role_applied || data.role || data.role_interest || data.placement_type ? `Role:      ${data.role_applied || data.role || data.role_interest || data.placement_type}` : '',
+    data.institution || data.university ? `Institution: ${data.institution || data.university}` : '',
+    data.course ? `Course:    ${data.course}` : '',
+    data.linkedin_url || data.linkedin ? `LinkedIn:  ${data.linkedin_url || data.linkedin}` : '',
+    ``,
+    `Message:`,
+    `${data.message || data.supporting_statement || data.motivation || data.why_volunteer || '(none)'}`,
+    ``,
+    `Please log in to the admin panel to view the full submission and respond:`,
+    `${ADMIN_URL}`
+  ].filter(Boolean).join('\n');
+
+  // Tiny HTML version
+  const esc = (v) => String(v == null ? '' : v).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  const html = `
+    <div style="font-family:Inter,Segoe UI,sans-serif;max-width:560px;margin:0 auto;color:#211B1F;line-height:1.55">
+      <h2 style="font-family:'Cormorant Garamond',Georgia,serif;color:#7a4f8e;font-weight:500">New ${esc(lbl.word)} received</h2>
+      <p>A new ${esc(lbl.word)} has just landed on the Ashiana Sheffield website.</p>
+      <table style="border-collapse:collapse;width:100%;font-size:14px;background:#faf6fc;border-radius:10px;overflow:hidden">
+        <tr><td style="padding:8px 12px;color:#555;width:120px">Name</td><td style="padding:8px 12px;font-weight:600">${esc(data.name || '(not given)')}</td></tr>
+        <tr><td style="padding:8px 12px;color:#555">Email</td><td style="padding:8px 12px">${esc(data.email || '(not given)')}</td></tr>
+        <tr><td style="padding:8px 12px;color:#555">Telephone</td><td style="padding:8px 12px">${esc(data.telephone || data.phone || '(not given)')}</td></tr>
+        ${data.position ? `<tr><td style="padding:8px 12px;color:#555">Position</td><td style="padding:8px 12px">${esc(data.position)}</td></tr>` : ''}
+        ${data.role_applied || data.role || data.role_interest || data.placement_type ? `<tr><td style="padding:8px 12px;color:#555">Role</td><td style="padding:8px 12px">${esc(data.role_applied || data.role || data.role_interest || data.placement_type)}</td></tr>` : ''}
+        ${data.linkedin_url || data.linkedin ? `<tr><td style="padding:8px 12px;color:#555">LinkedIn</td><td style="padding:8px 12px"><a href="${esc(data.linkedin_url || data.linkedin)}">${esc(data.linkedin_url || data.linkedin)}</a></td></tr>` : ''}
+      </table>
+      <h3 style="font-family:'Cormorant Garamond',Georgia,serif;font-weight:500;color:#211B1F;margin-top:24px">Message</h3>
+      <div style="white-space:pre-wrap;background:#fff;border:1px solid #E7DEE3;padding:14px 16px;border-radius:10px">${esc(data.message || data.supporting_statement || data.motivation || data.why_volunteer || '(none)')}</div>
+      <p style="margin-top:24px"><a href="${esc(ADMIN_URL)}" style="background:#7a4f8e;color:#fff;text-decoration:none;padding:12px 22px;border-radius:10px;font-weight:600;display:inline-block">Open admin dashboard &rarr;</a></p>
+      <p style="font-size:.85em;color:#888;margin-top:24px">Sent by the Ashiana Sheffield website backend. Reply directly to the visitor at ${esc(data.email || data.telephone || 'their contact details above')}.</p>
+    </div>
+  `;
+
+  // Primary path: Resend
+  if (resendClient) {
+    try {
+      const r = await resendClient.emails.send({
+        from: RESEND_FROM,
+        to: NOTIFY_RECIPIENTS,
+        subject,
+        text,
+        html,
+        reply_to: data.email || undefined,
+      });
+      if (r && r.error) {
+        console.warn('Resend returned error:', r.error.message || r.error);
+      } else {
+        return;
+      }
+    } catch (e) {
+      console.error('Resend send failed:', e.message);
+    }
+  }
+
+  // Fallback path: FormSubmit (only fires if Resend is not configured or failed)
   try {
-    const lbl = FORM_LABEL[formType] || { article: 'a', word: 'submission' };
-    const subject = `New ${lbl.word} received on Ashiana website`;
-    const payload = {
-      _subject: subject,
-      _template: 'table',
-      _captcha: 'false',
-      _cc: NOTIFY_CC,
-      'Form type':     formType,
-      'Submitted at':  new Date().toISOString(),
-      'Name':          data.name      || '(not given)',
-      'Email':         data.email     || '(not given)',
-      'Telephone':     data.telephone || '(not given)',
-      'Position':      data.position  || '',
-      'Stage':         data.stage     || '',
-      'Message':       data.message   || '',
-      'Outcome wanted':data.outcome   || '',
-      'Admin panel':   ADMIN_URL,
-      'Action':        `You have received ${lbl.article} new ${lbl.word} on the Ashiana website. Please log in to the admin panel above to view the full submission and respond.`,
-    };
     const url = 'https://formsubmit.co/ajax/' + encodeURIComponent(NOTIFY_PRIMARY);
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({
+        _subject: subject,
+        _template: 'table',
+        _captcha: 'false',
+        _cc: NOTIFY_CC,
+        'Form type':     formType,
+        'Submitted at':  new Date().toISOString(),
+        'Name':          data.name      || '(not given)',
+        'Email':         data.email     || '(not given)',
+        'Telephone':     data.telephone || data.phone || '(not given)',
+        'Message':       data.message || data.supporting_statement || data.motivation || data.why_volunteer || '',
+        'Admin panel':   ADMIN_URL,
+      }),
     });
-    if (!r.ok) {
-      console.warn('Notification email returned non-OK:', r.status);
-    }
+    if (!r.ok) console.warn('FormSubmit fallback returned non-OK:', r.status);
   } catch (e) {
-    console.error('notifyByEmail failed:', e.message);
+    console.error('FormSubmit fallback also failed:', e.message);
   }
 }
 
@@ -223,6 +361,88 @@ app.post('/api/submit', (req, res) => {
 
   return res.json({ ok:true, id: info.lastInsertRowid });
 });
+
+
+// ---- Career/Volunteer/Student form submit (multipart, with optional CV) ----
+const CAREER_FORMS = new Set(['career','volunteer','student']);
+const careerSubmitMiddleware = cvUploader ? cvUploader.single('cv') : (req,res,next) => next();
+
+app.post('/api/submit/career', careerSubmitMiddleware, (req, res) => {
+  try {
+    const body = req.body || {};
+    const formType = (body.form_type || '').toLowerCase();
+    if (!CAREER_FORMS.has(formType)) return res.status(400).json({ ok:false, error:'Invalid form_type for this endpoint' });
+    if (body._honey) return res.json({ ok:true });
+    if (!body.name) return res.status(400).json({ ok:false, error:'Name is required' });
+
+    const file = req.file || null;
+    // Combine experience/languages/hours into the skills column so nothing is dropped
+    const skillsParts = [];
+    if (body.skills)      skillsParts.push(String(body.skills));
+    if (body.experience)  skillsParts.push('Experience:\n' + body.experience);
+    if (body.languages)   skillsParts.push('Languages: ' + body.languages);
+    if (body.hours)       skillsParts.push('Hours per week: ' + body.hours);
+    if (body.placement_type) skillsParts.push('Placement type: ' + body.placement_type);
+
+    const info = db.prepare(`
+      INSERT INTO submissions
+        (form_type, name, email, telephone, position, stage, message, outcome,
+         role_applied, organisation, availability, right_to_work, references_text,
+         where_heard, institution, course, year_of_study, placement_dates,
+         why_volunteer, skills, linkedin_url, cv_link, cv_filename, cv_storedname,
+         ip, user_agent)
+      VALUES
+        (@form_type, @name, @email, @telephone, @position, @stage, @message, @outcome,
+         @role_applied, @organisation, @availability, @right_to_work, @references_text,
+         @where_heard, @institution, @course, @year_of_study, @placement_dates,
+         @why_volunteer, @skills, @linkedin_url, @cv_link, @cv_filename, @cv_storedname,
+         @ip, @ua)
+    `).run({
+      form_type:     formType,
+      name:          String(body.name      || '').slice(0,200),
+      email:         String(body.email     || '').slice(0,200),
+      telephone:     String(body.telephone || body.phone || '').slice(0,50),
+      position:      String(body.position  || '').slice(0,100),
+      stage:         String(body.stage     || '').slice(0,100),
+      message:       String(body.message   || body.supporting_statement || '').slice(0,8000),
+      outcome:       String(body.outcome   || '').slice(0,4000),
+      role_applied:  String(body.role_applied || body.role || body.role_interest || body.placement_type || '').slice(0,200),
+      organisation:  String(body.organisation || '').slice(0,200),
+      availability:  String(body.availability || '').slice(0,200),
+      right_to_work: String(body.right_to_work || '').slice(0,40),
+      references_text: String(body.references_text || body.references || '').slice(0,2000),
+      where_heard:   String(body.where_heard || '').slice(0,200),
+      institution:   String(body.institution || body.university || '').slice(0,200),
+      course:        String(body.course || '').slice(0,200),
+      year_of_study: String(body.year_of_study || '').slice(0,40),
+      placement_dates: String(body.placement_dates || body.dates || body.hours_dates || '').slice(0,200),
+      why_volunteer: String(body.why_volunteer || body.motivation || '').slice(0,4000),
+      skills:        skillsParts.join('\n\n').slice(0,4000),
+      linkedin_url:  String(body.linkedin_url || body.linkedin || '').slice(0,400),
+      cv_link:       String(body.cv_link || body.cv_url || '').slice(0,600),
+      cv_filename:   file ? String(file.originalname).slice(0,200) : '',
+      cv_storedname: file ? String(file.filename).slice(0,200) : '',
+      ip:            getClientIp(req).slice(0,64),
+      ua:            String(req.headers['user-agent'] || '').slice(0,400),
+    });
+
+    notifyByEmail(formType, { ...body, name: body.name, message: body.message || body.supporting_statement || body.why_volunteer || '' }).catch(()=>{});
+    return res.json({ ok:true, id: info.lastInsertRowid });
+  } catch (e) {
+    console.error('career submit error:', e.message);
+    return res.status(500).json({ ok:false, error:'Could not save your application: ' + e.message });
+  }
+});
+
+// ---- Admin: download a stored CV ----
+app.get('/api/admin/submissions/:id/cv', requireAuth, (req, res) => {
+  const row = db.prepare('SELECT cv_filename, cv_storedname FROM submissions WHERE id = ?').get(req.params.id);
+  if (!row || !row.cv_storedname) return res.status(404).send('No CV stored for this submission');
+  const filePath = path.join(UPLOAD_DIR, row.cv_storedname);
+  if (!fs.existsSync(filePath)) return res.status(404).send('CV file is missing on disk');
+  res.download(filePath, row.cv_filename || row.cv_storedname);
+});
+
 
 // ---------- Admin auth ----------
 
@@ -296,7 +516,10 @@ app.get('/api/admin/submissions', requireAuth, (req, res) => {
   const total = db.prepare(`SELECT COUNT(*) AS n FROM submissions ${whereSql}`).get(...params).n;
   const rows = db.prepare(`
     SELECT id, form_type, submitted_at, name, email, telephone, position, stage,
-           message, outcome, is_read
+           message, outcome, is_read,
+           role_applied, organisation, availability, right_to_work, references_text,
+           where_heard, institution, course, year_of_study, placement_dates,
+           why_volunteer, skills, linkedin_url, cv_link, cv_filename, cv_storedname
     FROM submissions
     ${whereSql}
     ORDER BY submitted_at DESC
@@ -343,13 +566,16 @@ app.get('/api/admin/export.csv', requireAuth, (req, res) => {
     return res.status(400).send('form_type required');
   }
   const rows = db.prepare(`
-    SELECT id, submitted_at, name, email, telephone, position, stage, message, outcome
+    SELECT id, submitted_at, name, email, telephone, position, stage, message, outcome,
+           role_applied, organisation, availability, right_to_work, references_text,
+           where_heard, institution, course, year_of_study, placement_dates,
+           why_volunteer, skills, linkedin_url, cv_link, cv_filename
     FROM submissions
     WHERE form_type = ? AND is_archived = 0
     ORDER BY submitted_at DESC
   `).all(formType);
 
-  const headers = ['id','submitted_at','name','email','telephone','position','stage','message','outcome'];
+  const headers = ['id','submitted_at','name','email','telephone','position','stage','message','outcome','role_applied','organisation','availability','right_to_work','references_text','where_heard','institution','course','year_of_study','placement_dates','why_volunteer','skills','linkedin_url','cv_link','cv_filename'];
   function escapeCsv(v) {
     if (v == null) return '';
     const s = String(v);
@@ -459,16 +685,21 @@ app.post('/api/ask', async (req, res) => {
 app.get('/api/news', (req, res) => {
   try {
     const rows = db.prepare(
-      "SELECT id, title, content, linkedin_url, author_name, author_role, published_at " +
+      "SELECT id, title, content, linkedin_url, author_name, author_role, published_at, images " +
       "FROM news_posts WHERE is_published = 1 ORDER BY published_at DESC LIMIT 6"
     ).all();
     const posts = rows.map(r => ({
+      id: r.id,
       title: r.title,
       link: r.linkedin_url || '',
       pubDate: r.published_at,
       summary: (r.content || '').slice(0, 280),
       content: r.content,
       author: { name: r.author_name, role: r.author_role },
+      images: (function(){
+        try { return JSON.parse(r.images || '[]').map(im => '/api/news-image/' + im.storedname); }
+        catch(e){ return []; }
+      })(),
     }));
     return res.json({ ok:true, posts });
   } catch (e) {
@@ -477,41 +708,82 @@ app.get('/api/news', (req, res) => {
   }
 });
 
+// Serve news images (public)
+app.get('/api/news-image/:name', (req, res) => {
+  const name = req.params.name;
+  if (!/^[a-z0-9_.\-]+$/i.test(name)) return res.status(400).send('Bad name');
+  const filePath = path.join(NEWS_IMG_DIR, name);
+  if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.sendFile(filePath);
+});
+
 // ---------- Admin: news posts CRUD ----------
 app.get('/api/admin/news', requireAuth, (req, res) => {
-  const rows = db.prepare("SELECT id, title, content, linkedin_url, author_name, author_role, published_at, is_published FROM news_posts ORDER BY published_at DESC").all();
+  const rows = db.prepare("SELECT id, title, content, linkedin_url, author_name, author_role, published_at, is_published, images FROM news_posts ORDER BY published_at DESC").all().map(r => {
+    let imgs = []; try { imgs = JSON.parse(r.images || '[]'); } catch(_){}
+    return Object.assign({}, r, { images: imgs });
+  });
   res.json({ ok:true, posts: rows });
 });
-app.post('/api/admin/news', requireAuth, (req, res) => {
+const newsImagesMiddleware = newsImageUploader ? newsImageUploader.array('images', 6) : (req,res,next) => next();
+
+app.post('/api/admin/news', requireAuth, newsImagesMiddleware, (req, res) => {
   const b = req.body || {};
   if (!b.title || !b.content) return res.status(400).json({ ok:false, error:'Title and content are required' });
+  const imageMeta = (req.files || []).map(f => ({
+    filename: String(f.originalname).slice(0, 200),
+    storedname: String(f.filename).slice(0, 200),
+  }));
+  const isPublished = (b.is_published === false || b.is_published === 'false' || b.is_published === '0') ? 0 : 1;
   const info = db.prepare(
-    "INSERT INTO news_posts (title, content, linkedin_url, author_name, author_role, is_published) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO news_posts (title, content, linkedin_url, author_name, author_role, is_published, images) VALUES (?, ?, ?, ?, ?, ?, ?)"
   ).run(
     String(b.title).slice(0, 300),
     String(b.content).slice(0, 12000),
     String(b.linkedin_url || '').slice(0, 600),
     String(b.author_name || 'Daljit Kaur').slice(0, 120),
     String(b.author_role || 'Ashiana Chair & Non-Executive Chief Officer (NECO)').slice(0, 200),
-    b.is_published === false ? 0 : 1
+    isPublished,
+    JSON.stringify(imageMeta)
   );
-  res.json({ ok:true, id: info.lastInsertRowid });
+  res.json({ ok:true, id: info.lastInsertRowid, images: imageMeta });
 });
-app.put('/api/admin/news/:id', requireAuth, (req, res) => {
+app.put('/api/admin/news/:id', requireAuth, newsImagesMiddleware, (req, res) => {
   const b = req.body || {};
   if (!b.title || !b.content) return res.status(400).json({ ok:false, error:'Title and content are required' });
+  // Fetch existing image list
+  const cur = db.prepare("SELECT images FROM news_posts WHERE id = ?").get(req.params.id);
+  let existing = [];
+  try { existing = JSON.parse((cur && cur.images) || '[]'); } catch(_){}
+  // If client sent keep_images (JSON array of storednames to KEEP), filter existing
+  if (typeof b.keep_images === 'string') {
+    try {
+      const keep = new Set(JSON.parse(b.keep_images));
+      existing = existing.filter(im => keep.has(im.storedname));
+    } catch(_){}
+  }
+  // Add new uploads
+  const added = (req.files || []).map(f => ({
+    filename: String(f.originalname).slice(0, 200),
+    storedname: String(f.filename).slice(0, 200),
+  }));
+  const finalImages = existing.concat(added);
+
+  const isPublished = (b.is_published === false || b.is_published === 'false' || b.is_published === '0') ? 0 : 1;
   db.prepare(
-    "UPDATE news_posts SET title = ?, content = ?, linkedin_url = ?, author_name = ?, author_role = ?, is_published = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
+    "UPDATE news_posts SET title = ?, content = ?, linkedin_url = ?, author_name = ?, author_role = ?, is_published = ?, images = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?"
   ).run(
     String(b.title).slice(0, 300),
     String(b.content).slice(0, 12000),
     String(b.linkedin_url || '').slice(0, 600),
     String(b.author_name || 'Daljit Kaur').slice(0, 120),
     String(b.author_role || 'Ashiana Chair & Non-Executive Chief Officer (NECO)').slice(0, 200),
-    b.is_published === false ? 0 : 1,
+    isPublished,
+    JSON.stringify(finalImages),
     req.params.id
   );
-  res.json({ ok:true });
+  res.json({ ok:true, images: finalImages });
 });
 app.delete('/api/admin/news/:id', requireAuth, (req, res) => {
   db.prepare("DELETE FROM news_posts WHERE id = ?").run(req.params.id);
