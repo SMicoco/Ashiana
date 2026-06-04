@@ -133,6 +133,9 @@
     <button class="tab active" data-form="compliment">Compliments <span class="count" id="cnt-compliment">0</span></button>
     <button class="tab" data-form="comment">Comments <span class="count" id="cnt-comment">0</span></button>
     <button class="tab" data-form="complaint">Complaints <span class="count" id="cnt-complaint">0</span></button>
+    <button class="tab" data-form="career">Career <span class="count" id="cnt-career">0</span></button>
+    <button class="tab" data-form="volunteer">Volunteer <span class="count" id="cnt-volunteer">0</span></button>
+    <button class="tab" data-form="student">Student <span class="count" id="cnt-student">0</span></button>
     <button class="tab" data-form="news" style="margin-left:auto">News posts <span class="count" id="cnt-news">0</span></button>
   </nav>
 
@@ -167,7 +170,7 @@
 </div>
 
 <!-- News post editor modal -->
-<div class="modal-bg" id="newsModalBg"><div class="modal" style="max-width:640px"><h2 id="newsModalTitle">Add news post</h2><label>Title</label><input type="text" id="newsTitle" placeholder="e.g. Ashiana opens new outreach service"><label>Content (paste the post text from LinkedIn)</label><textarea id="newsContent" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem;font-family:inherit;min-height:160px;resize:vertical;line-height:1.55"></textarea><label>LinkedIn post URL (optional but recommended)</label><input type="url" id="newsLinkedIn" placeholder="https://www.linkedin.com/posts/..."><label>Publish status</label><select id="newsStatus" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem"><option value="1">Published (visible on public News page)</option><option value="0">Draft (not visible to public)</option></select><div class="msg" id="newsMsg"></div><div class="row"><button class="btn btn-secondary" id="newsCancel" style="flex:1">Cancel</button><button class="btn btn-primary" id="newsSave" style="flex:1">Save post</button></div></div></div>
+<div class="modal-bg" id="newsModalBg"><div class="modal" style="max-width:640px"><h2 id="newsModalTitle">Add news post</h2><label>Title</label><input type="text" id="newsTitle" placeholder="e.g. Ashiana opens new outreach service"><label>Content (paste the post text from LinkedIn)</label><textarea id="newsContent" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem;font-family:inherit;min-height:160px;resize:vertical;line-height:1.55"></textarea><label>LinkedIn post URL (optional but recommended)</label><input type="url" id="newsLinkedIn" placeholder="https://www.linkedin.com/posts/..."><label>Publish status</label><select id="newsStatus" style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:1rem"><option value="1">Published (visible on public News page)</option><option value="0">Draft (not visible to public)</option></select><label>Images (optional, up to 6)</label><input type="file" id="newsImages" accept="image/*" multiple style="width:100%;padding:11px 13px;border:1.5px solid #DCD3D7;border-radius:10px;font-size:.92rem;background:#fff"><div id="newsImagesPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px"></div><p style="font-size:.78rem;color:var(--muted);margin:6px 0 0">JPG, PNG, WebP or GIF. Max 5 MB per image.</p><div class="msg" id="newsMsg"></div><div class="row"><button class="btn btn-secondary" id="newsCancel" style="flex:1">Cancel</button><button class="btn btn-primary" id="newsSave" style="flex:1">Save post</button></div></div></div>
 
 <div class="pager">
     <button class="btn btn-secondary" id="prevBtn" disabled>Previous</button>
@@ -238,7 +241,7 @@ async function refreshCounts(){
   const r = await fetch('/api/admin/counts', { credentials:'include' });
   const j = await r.json();
   if (!j.ok) return;
-  for (const k of ['compliment','comment','complaint']) {
+  for (const k of ['compliment','comment','complaint','career','volunteer','student']) {
     const el = document.getElementById('cnt-' + k);
     if (el) el.textContent = j.counts[k].total + (j.counts[k].unread ? ' (' + j.counts[k].unread + ' new)' : '');
   }
@@ -317,6 +320,21 @@ async function openDrawer(id){
       ${row.telephone ? '<dt>Phone</dt><dd>'   + escapeHtml(row.telephone) + '</dd>' : ''}
       ${row.position  ? '<dt>Position</dt><dd>'+ escapeHtml(row.position)  + '</dd>' : ''}
       ${row.stage     ? '<dt>Stage</dt><dd>'   + escapeHtml(row.stage)     + '</dd>' : ''}
+      ${row.role_applied   ? '<dt>Role</dt><dd>'        + escapeHtml(row.role_applied)   + '</dd>' : ''}
+      ${row.organisation   ? '<dt>Organisation</dt><dd>'+ escapeHtml(row.organisation)   + '</dd>' : ''}
+      ${row.institution    ? '<dt>University</dt><dd>'  + escapeHtml(row.institution)    + '</dd>' : ''}
+      ${row.course         ? '<dt>Course</dt><dd>'      + escapeHtml(row.course)         + '</dd>' : ''}
+      ${row.year_of_study  ? '<dt>Year</dt><dd>'        + escapeHtml(row.year_of_study)  + '</dd>' : ''}
+      ${row.placement_dates? '<dt>Dates</dt><dd>'       + escapeHtml(row.placement_dates)+ '</dd>' : ''}
+      ${row.availability   ? '<dt>Availability</dt><dd>'+ escapeHtml(row.availability)   + '</dd>' : ''}
+      ${row.right_to_work  ? '<dt>Right to work</dt><dd>'+ escapeHtml(row.right_to_work) + '</dd>' : ''}
+      ${row.linkedin_url   ? '<dt>LinkedIn</dt><dd><a href="' + escapeHtml(row.linkedin_url) + '" target="_blank" style="color:var(--burgundy)">View</a></dd>' : ''}
+      ${row.cv_filename    ? '<dt>CV file</dt><dd><a href="/api/admin/submissions/' + row.id + '/cv" target="_blank" style="color:var(--burgundy);font-weight:600">&#8595; Download ' + escapeHtml(row.cv_filename) + '</a></dd>' : ''}
+      ${row.cv_link        ? '<dt>CV link</dt><dd><a href="' + escapeHtml(row.cv_link) + '" target="_blank" style="color:var(--burgundy)">Open</a></dd>' : ''}
+      ${row.references_text? '<dt>References</dt><dd style="white-space:pre-wrap">' + escapeHtml(row.references_text) + '</dd>' : ''}
+      ${row.skills         ? '<dt>Skills</dt><dd style="white-space:pre-wrap">' + escapeHtml(row.skills) + '</dd>' : ''}
+      ${row.why_volunteer  ? '<dt>Why volunteer</dt><dd style="white-space:pre-wrap">' + escapeHtml(row.why_volunteer) + '</dd>' : ''}
+      ${row.where_heard    ? '<dt>Where heard</dt><dd>' + escapeHtml(row.where_heard) + '</dd>' : ''}
       ${row.outcome   ? '<dt>Outcome</dt><dd>' + escapeHtml(row.outcome)   + '</dd>' : ''}
     </dl>
     <div class="message-block">${escapeHtml(row.message || '')}</div>
@@ -452,6 +470,9 @@ setInterval(() => { refreshCounts(); }, 30000);
     titleEl.textContent = 'Add news post';
     fTitle.value = ''; fContent.value = ''; fLI.value = ''; fStatus.value = '1';
     msgEl.className = 'msg'; msgEl.textContent = '';
+    var prev = document.getElementById('newsImagesPreview'); if (prev) prev.innerHTML = '';
+    var imgInput = document.getElementById('newsImages'); if (imgInput) imgInput.value = '';
+    window._newsKeepImages = null;
     modal.classList.add('show');
   });
 
@@ -472,6 +493,25 @@ setInterval(() => { refreshCounts(); }, 30000);
       fLI.value = p.linkedin_url || '';
       fStatus.value = p.is_published ? '1' : '0';
       msgEl.className = 'msg'; msgEl.textContent = '';
+      // Render existing image thumbnails with remove buttons
+      var prev = document.getElementById('newsImagesPreview');
+      var existing = Array.isArray(p.images) ? p.images : [];
+      window._newsKeepImages = existing.map(function(im){ return im.storedname; });
+      if (prev){
+        prev.innerHTML = window._newsKeepImages.map(function(name){
+          return '<div data-stored="'+name+'" style="position:relative;width:74px;height:74px;border-radius:8px;overflow:hidden;border:1px solid var(--border)">'
+            + '<img src="/api/news-image/'+name+'" style="width:100%;height:100%;object-fit:cover">'
+            + '<button type="button" data-remove="'+name+'" style="position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;border:none;background:rgba(0,0,0,.6);color:#fff;cursor:pointer;font-size:14px;line-height:1;padding:0">x</button>'
+            + '</div>';
+        }).join('');
+        prev.querySelectorAll('button[data-remove]').forEach(function(btn){
+          btn.addEventListener('click', function(){
+            var keep = btn.getAttribute('data-remove');
+            window._newsKeepImages = (window._newsKeepImages || []).filter(function(n){ return n !== keep; });
+            var card = btn.closest('[data-stored]'); if (card) card.remove();
+          });
+        });
+      }
       modal.classList.add('show');
     } else if (b.dataset.act === 'del'){
       if (!confirm('Delete this news post permanently?')) return;
@@ -483,25 +523,35 @@ setInterval(() => { refreshCounts(); }, 30000);
   document.getElementById('newsCancel').addEventListener('click', function(){ modal.classList.remove('show'); });
   document.getElementById('newsSave').addEventListener('click', async function(){
     msgEl.className = 'msg'; msgEl.textContent = '';
-    var payload = {
-      title: fTitle.value.trim(),
-      content: fContent.value.trim(),
-      linkedin_url: fLI.value.trim(),
-      is_published: fStatus.value === '1',
-    };
-    if (!payload.title || !payload.content){
+    var title = fTitle.value.trim();
+    var content = fContent.value.trim();
+    if (!title || !content){
       msgEl.className = 'msg err'; msgEl.textContent = 'Title and content are required.'; return;
+    }
+    var fd = new FormData();
+    fd.append('title', title);
+    fd.append('content', content);
+    fd.append('linkedin_url', fLI.value.trim());
+    fd.append('is_published', fStatus.value === '1' ? '1' : '0');
+    // Existing images to keep (on edit)
+    if (editingId && window._newsKeepImages){
+      fd.append('keep_images', JSON.stringify(window._newsKeepImages));
+    }
+    // New uploads
+    var imgInput = document.getElementById('newsImages');
+    if (imgInput && imgInput.files && imgInput.files.length){
+      for (var i=0; i<imgInput.files.length && i<6; i++){
+        fd.append('images', imgInput.files[i]);
+      }
     }
     var url = editingId ? '/api/admin/news/' + editingId : '/api/admin/news';
     var method = editingId ? 'PUT' : 'POST';
-    var r = await fetch(url, {
-      method: method, credentials:'include',
-      headers: { 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
-    });
+    var r = await fetch(url, { method: method, credentials:'include', body: fd });
     var j = await r.json();
     if (!j.ok){ msgEl.className = 'msg err'; msgEl.textContent = j.error || 'Could not save'; return; }
     msgEl.className = 'msg ok'; msgEl.textContent = 'Saved.';
+    if (imgInput) imgInput.value = '';
+    window._newsKeepImages = null;
     setTimeout(function(){ modal.classList.remove('show'); loadNewsPosts(); }, 700);
   });
 
