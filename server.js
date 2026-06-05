@@ -370,7 +370,9 @@ const careerSubmitMiddleware = cvUploader ? cvUploader.single('cv') : (req,res,n
 app.post('/api/submit/career', careerSubmitMiddleware, (req, res) => {
   try {
     const body = req.body || {};
-    const formType = (body.form_type || '').toLowerCase();
+    // Multer turns duplicate field names into arrays; coerce to a single string.
+    const rawType = Array.isArray(body.form_type) ? body.form_type[0] : body.form_type;
+    const formType = String(rawType || '').toLowerCase();
     if (!CAREER_FORMS.has(formType)) return res.status(400).json({ ok:false, error:'Invalid form_type for this endpoint' });
     if (body._honey) return res.json({ ok:true });
     if (!body.name) return res.status(400).json({ ok:false, error:'Name is required' });
