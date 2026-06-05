@@ -683,8 +683,71 @@ app.post('/api/ask', async (req, res) => {
   }
 });
 
-// ---------- Public news feed (admin-curated, from DB) ----------
-app.get('/api/news', (req, res) => {
+// ---------- Public news feed (admin-curated, from DB; falls back to live web news) ----------
+
+// In-memory cache for the external news fallback so we don't hammer Google News on every request.
+let _fallbackNewsCache = { time: 0, items: [] };
+const _FALLBACK_CACHE_MS = 30 * 60 * 1000; // 30 minutes
+// Neutral, topic-relevant search queries. Rotates each cache cycle so the page stays fresh.
+const _FALLBACK_QUERIES = [
+  'domestic abuse UK refuge',
+  'forced marriage UK',
+  'female genital mutilation UK',
+  'human trafficking UK women',
+  'honour based violence UK',
+  'BAMER women UK support',
+];
+
+function _stripHtml(s){ return String(s||'').replace(/<[^>]+>/g, '').trim(); }
+function _decodeEntities(s){
+  return String(s||'')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+}
+
+async function fetchFallbackNews(){
+  if (Date.now() - _fallbackNewsCache.time < _FALLBACK_CACHE_MS && _fallbackNewsCache.items.length) {
+    return _fallbackNewsCache.items;
+  }
+  // Pick a query that rotates predictably so the same hour returns the same query
+  const idx = Math.floor(Date.now() / _FALLBACK_CACHE_MS) % _FALLBACK_QUERIES.length;
+  const q = _FALLBACK_QUERIES[idx];
+  const url = 'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-GB&gl=GB&ceid=GB:en';
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'AshianaNewsBot/1.0' } });
+    if (!res.ok) throw new Error('upstream ' + res.status);
+    const xml = await res.text();
+    const items = [];
+    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+    let m;
+    while ((m = itemRegex.exec(xml)) !== null && items.length < 6) {
+      const block = m[1];
+      const titleM = block.match(/<title>([\s\S]*?)<\/title>/);
+      const linkM = block.match(/<link>([\s\S]*?)<\/link>/);
+      const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+      const descM = block.match(/<description>([\s\S]*?)<\/description>/);
+      if (!titleM || !linkM) continue;
+      items.push({
+        id: 'g' + items.length,
+        title: _decodeEntities(titleM[1]).slice(0, 200),
+        link: _decodeEntities(linkM[1]).trim(),
+        pubDate: dateM ? dateM[1].trim() : '',
+        summary: _stripHtml(_decodeEntities(descM ? descM[1] : '')).slice(0, 240),
+        content: '',
+        author: null,
+        images: [],
+      });
+    }
+    _fallbackNewsCache = { time: Date.now(), items };
+    return items;
+  } catch (e) {
+    console.warn('Fallback news fetch failed:', e.message);
+    return _fallbackNewsCache.items || [];
+  }
+}
+
+app.get('/api/news', async (req, res) => {
   try {
     const rows = db.prepare(
       "SELECT id, title, content, linkedin_url, author_name, author_role, published_at, images " +
@@ -703,7 +766,12 @@ app.get('/api/news', (req, res) => {
         catch(e){ return []; }
       })(),
     }));
-    return res.json({ ok:true, posts });
+    if (posts.length === 0) {
+      // No admin posts — fall back to live web news, neutral search, cached 30 min.
+      const fallback = await fetchFallbackNews();
+      return res.json({ ok:true, posts: fallback, source: 'web' });
+    }
+    return res.json({ ok:true, posts, source: 'admin' });
   } catch (e) {
     console.error('news fetch failed:', e.message);
     return res.status(500).json({ ok:false, error:'Could not load news.' });
