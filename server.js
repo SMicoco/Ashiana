@@ -702,8 +702,15 @@ function _stripHtml(s){ return String(s||'').replace(/<[^>]+>/g, '').trim(); }
 function _decodeEntities(s){
   return String(s||'')
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&hellip;/g, '...')
+    .replace(/&mdash;/g, '-')
+    .replace(/&ndash;/g, '-')
     .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'");
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, function(_, n){ return String.fromCharCode(parseInt(n, 10)); })
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }
 
 async function fetchFallbackNews(){
@@ -739,6 +746,12 @@ async function fetchFallbackNews(){
         images: [],
       });
     }
+    // Sort newest first
+    items.sort(function(a,b){
+      var ta = Date.parse(a.pubDate) || 0;
+      var tb = Date.parse(b.pubDate) || 0;
+      return tb - ta;
+    });
     _fallbackNewsCache = { time: Date.now(), items };
     return items;
   } catch (e) {
