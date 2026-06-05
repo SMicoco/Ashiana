@@ -136,6 +136,7 @@
     <button class="tab" data-form="career">Career <span class="count" id="cnt-career">0</span></button>
     <button class="tab" data-form="volunteer">Volunteer <span class="count" id="cnt-volunteer">0</span></button>
     <button class="tab" data-form="student">Student <span class="count" id="cnt-student">0</span></button>
+    <button class="tab" data-form="training">Training <span class="count" id="cnt-training">0</span></button>
     <button class="tab" data-form="news" style="margin-left:auto">News posts <span class="count" id="cnt-news">0</span></button>
   </nav>
 
@@ -241,7 +242,7 @@ async function refreshCounts(){
   const r = await fetch('/api/admin/counts', { credentials:'include' });
   const j = await r.json();
   if (!j.ok) return;
-  for (const k of ['compliment','comment','complaint','career','volunteer','student']) {
+  for (const k of ['compliment','comment','complaint','career','volunteer','student','training']) {
     const el = document.getElementById('cnt-' + k);
     if (el) el.textContent = j.counts[k].total + (j.counts[k].unread ? ' (' + j.counts[k].unread + ' new)' : '');
   }
