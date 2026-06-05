@@ -201,7 +201,7 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ ok:false, error:'Session expired, please sign in again' });
   }
 }
-const VALID_FORMS = new Set(['compliment','comment','complaint','career','volunteer','student']);
+const VALID_FORMS = new Set(['compliment','comment','complaint','career','volunteer','student','training']);
 
 // ---------- Notification email (via FormSubmit) ----------
 // Sends a short notification to the three named recipients each time a new
@@ -222,6 +222,7 @@ const FORM_LABEL = {
   career:     { article: 'a',  word: 'job application' },
   volunteer:  { article: 'a',  word: 'volunteer enquiry' },
   student:    { article: 'a',  word: 'student placement enquiry' },
+  training:   { article: 'a',  word: 'training enquiry' },
 };
 
 async function notifyByEmail(formType, data) {
