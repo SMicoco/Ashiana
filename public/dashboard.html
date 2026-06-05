@@ -256,7 +256,22 @@ async function load(){
   if (j.rows.length === 0){
     tbody.innerHTML = '<tr><td colspan="6"><div class="empty"><h2>Nothing here yet</h2><p>New submissions will appear here in real time.</p></div></td></tr>';
   } else {
-    tbody.innerHTML = j.rows.map(row => `
+    tbody.innerHTML = j.rows.map(row => {
+      // For career/volunteer/student rows, build attachments cell content
+      const isCareerForm = ['career','volunteer','student'].includes(row.form_type);
+      const role = row.role_applied || row.position || row.stage || '';
+      const detailsBits = [];
+      if (role) detailsBits.push('<div>' + escapeHtml(role) + '</div>');
+      if (isCareerForm && row.cv_filename) {
+        detailsBits.push('<div style="margin-top:4px"><a href="/api/admin/submissions/' + row.id + '/cv" target="_blank" style="color:var(--burgundy);font-weight:600;font-size:.85rem" onclick="event.stopPropagation()">&#8595; CV: ' + escapeHtml(row.cv_filename.length > 28 ? row.cv_filename.slice(0,25)+'...' : row.cv_filename) + '</a></div>');
+      }
+      if (isCareerForm && row.cv_link) {
+        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.cv_link) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem" onclick="event.stopPropagation()">CV link</a></div>');
+      }
+      if (isCareerForm && row.linkedin_url) {
+        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.linkedin_url) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem" onclick="event.stopPropagation()">LinkedIn &#8599;</a></div>');
+      }
+      return `
       <tr class="${row.is_read ? '' : 'unread'}" data-id="${row.id}">
         <td>${escapeHtml(fmt(row.submitted_at))}</td>
         <td>${escapeHtml(row.name)}</td>
@@ -264,13 +279,14 @@ async function load(){
           ${row.email ? '<div>' + escapeHtml(row.email) + '</div>' : ''}
           ${row.telephone ? '<div style="color:var(--muted)">' + escapeHtml(row.telephone) + '</div>' : ''}
         </td>
-        <td>${escapeHtml(row.position || row.stage || '')}</td>
-        <td class="msg-col">${escapeHtml((row.message || '').slice(0, 140))}</td>
+        <td>${detailsBits.join('') || '<span style="color:var(--muted)">—</span>'}</td>
+        <td class="msg-col">${escapeHtml((row.message || row.why_volunteer || '').slice(0, 140))}</td>
         <td class="actions">
           <button data-action="view" data-id="${row.id}">View</button>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
   }
   const totalPages = Math.max(1, Math.ceil(j.total / pageSize));
   document.getElementById('pageInfo').textContent = `Page ${j.page} of ${totalPages}  -  ${j.total} total`;
