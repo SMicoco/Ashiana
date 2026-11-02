@@ -129,13 +129,20 @@ app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: true, limit: '200kb' }));
 app.use(cookieParser());
 
-// CORS for cross-origin form posts from the public website
+// CORS for cross-origin form posts from the public website.
+// The live site (ashianasheffield.org and any subdomain) and the Netlify
+// deployment are always allowed; ALLOWED_ORIGINS can add further origins.
+const ALWAYS_ALLOWED_RE = /^https?:\/\/([a-z0-9-]+\.)*(ashianasheffield\.org|ashianasheffield\.netlify\.app|ashiana-backend\.onrender\.com)$/i;
 app.use(cors({
   origin: function (origin, cb) {
     if (!origin) return cb(null, true); // same-origin (admin dashboard)
     if (ALLOWED.length === 0) return cb(null, true);
     if (ALLOWED.includes(origin)) return cb(null, true);
-    return cb(new Error('Origin not allowed by CORS: ' + origin));
+    if (ALWAYS_ALLOWED_RE.test(origin)) return cb(null, true);
+    // Disallowed origin: respond without CORS headers (browser blocks it)
+    // instead of throwing, which previously produced an HTML 500 page.
+    console.warn('CORS: origin not allowed:', origin);
+    return cb(null, false);
   },
   credentials: true,
 }));
