@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Donation activity</title>
+<style>
+  :root { --lilac:#b18db1; --deep:#6b4a7a; --ink:#2b2233; --muted:#7a6f82; --bg:#f6f2f8; --card:#fff; }
+  * { box-sizing:border-box; }
+  body { margin:0; font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { background:linear-gradient(135deg,#b18db1,#8a6a93); color:#fff; padding:18px 24px; display:flex; align-items:center; gap:14px; }
+  header h1 { margin:0; font-size:18px; font-weight:700; letter-spacing:.2px; }
+  header .sub { opacity:.85; font-size:13px; }
+  main { max-width:1000px; margin:0 auto; padding:24px 16px 60px; }
+  .gate { background:var(--card); border-radius:14px; padding:28px; max-width:420px; margin:60px auto; box-shadow:0 6px 24px rgba(80,50,90,.08); }
+  .gate input { width:100%; padding:12px 14px; border:1px solid #d9cfe0; border-radius:10px; font-size:15px; margin:12px 0; }
+  .btn { background:var(--lilac); color:#fff; border:0; border-radius:10px; padding:11px 18px; font-weight:600; cursor:pointer; }
+  .btn.secondary { background:#eee6f1; color:var(--deep); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:14px; margin:18px 0; }
+  .card { background:var(--card); border-radius:14px; padding:18px 20px; box-shadow:0 4px 18px rgba(80,50,90,.06); }
+  .card .k { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.6px; }
+  .card .v { font-size:34px; font-weight:800; color:var(--deep); line-height:1.1; margin-top:6px; }
+  .card .s { color:var(--muted); font-size:13px; margin-top:4px; }
+  h2 { font-size:15px; margin:26px 0 10px; color:var(--deep); }
+  table { width:100%; border-collapse:collapse; background:var(--card); border-radius:12px; overflow:hidden; box-shadow:0 4px 18px rgba(80,50,90,.06); }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid #f0e9f3; font-size:14px; }
+  th { background:#f3ecf6; color:var(--deep); font-size:12px; text-transform:uppercase; letter-spacing:.5px; }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  .bars { display:flex; align-items:flex-end; gap:3px; height:120px; background:var(--card); padding:14px; border-radius:12px; box-shadow:0 4px 18px rgba(80,50,90,.06); }
+  .bar { flex:1; background:var(--lilac); border-radius:3px 3px 0 0; min-height:2px; position:relative; }
+  .bar.clicks { background:var(--deep); }
+  .bar:hover::after { content:attr(data-tip); position:absolute; bottom:100%; left:50%; transform:translateX(-50%); background:var(--ink); color:#fff; font-size:11px; padding:3px 7px; border-radius:6px; white-space:nowrap; margin-bottom:4px; }
+  .legend { color:var(--muted); font-size:12px; margin-top:6px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin:0 4px 0 10px; vertical-align:middle; }
+  .foot { color:var(--muted); font-size:12px; margin-top:26px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+  .err { color:#a33; margin-top:8px; font-size:13px; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ashiana · Donation activity</h1>
+  <span class="sub">Private view — how people reach the Zeffy donation page</span>
+</header>
+<main>
+  <section id="gate" class="gate">
+    <strong>Enter access key</strong>
+    <input id="key" type="password" placeholder="Access key" autocomplete="off">
+    <button class="btn" id="go">View</button>
+    <div id="gateErr" class="err"></div>
+  </section>
+
+  <section id="report" class="hidden">
+    <div class="grid" id="cards"></div>
+
+    <h2>Last 30 days</h2>
+    <div class="bars" id="bars"></div>
+    <div class="legend"><i style="background:#b18db1"></i>Donate page views <i style="background:#6b4a7a"></i>Donate clicks + QR scans</div>
+
+    <h2>Where the Donate clicks come from</h2>
+    <table><thead><tr><th>Page</th><th class="n">Clicks</th></tr></thead><tbody id="byPage"></tbody></table>
+
+    <h2>QR / short-link (ashianasheffield.org/give) sources</h2>
+    <table><thead><tr><th>Referrer</th><th class="n">Hits</th></tr></thead><tbody id="byRef"></tbody></table>
+
+    <div class="foot">
+      <span id="since"></span>
+      <span>
+        <button class="btn secondary" id="refresh">Refresh</button>
+        <button class="btn secondary" id="forget">Forget key on this device</button>
+      </span>
+    </div>
+    <p class="legend" style="margin-top:18px">Counts are anonymous website events (no personal data). Actual amounts received are in the Zeffy dashboard.</p>
+  </section>
+</main>
+<script>
+(function(){
+  var KEY_LS = 'ashiana_stats_key';
+  var $ = function(id){ return document.getElementById(id); };
+  function fmt(n){ return (n||0).toLocaleString('en-GB'); }
+  function g(o, ev){ return (o && o[ev] && o[ev].count) || 0; }
+  function u(o, ev){ return (o && o[ev] && o[ev].unique) || 0; }
+
+  function card(k, v, s){ return '<div class="card"><div class="k">'+k+'</div><div class="v">'+v+'</div><div class="s">'+(s||'')+'</div></div>'; }
+
+  function render(d){
+    var t = d.totals;
+    var intentAll = g(t.all_time,'donate_click') + g(t.all_time,'give_redirect');
+    var intent7 = g(t.last_7d,'donate_click') + g(t.last_7d,'give_redirect');
+    var intent24 = g(t.last_24h,'donate_click') + g(t.last_24h,'give_redirect');
+    $('cards').innerHTML =
+      card('Donation attempts · all time', fmt(intentAll), fmt(u(t.all_time,'donate_click') + u(t.all_time,'give_redirect')) + ' different people') +
+      card('Last 7 days', fmt(intent7), 'donate clicks + QR scans') +
+      card('Last 24 hours', fmt(intent24), 'donate clicks + QR scans') +
+      card('QR / short-link scans', fmt(g(t.all_time,'give_redirect')), fmt(g(t.last_7d,'give_redirect')) + ' in the last 7 days') +
+      card('Donate button clicks', fmt(g(t.all_time,'donate_click')), fmt(g(t.last_7d,'donate_click')) + ' in the last 7 days') +
+      card('Donate page views', fmt(g(t.all_time,'donate_view')), fmt(g(t.last_7d,'donate_view')) + ' in the last 7 days');
+
+    // 30-day bars
+    var days = {}; var today = new Date();
+    for (var i=29;i>=0;i--){ var dt = new Date(today); dt.setDate(today.getDate()-i); var k = dt.toISOString().slice(0,10); days[k] = {v:0,c:0}; }
+    (d.by_day||[]).forEach(function(r){ if(!days[r.day]) return; if (r.event==='donate_view') days[r.day].v += r.n; else days[r.day].c += r.n; });
+    var max = 1; Object.keys(days).forEach(function(k){ max = Math.max(max, days[k].v, days[k].c); });
+    $('bars').innerHTML = Object.keys(days).map(function(k){
+      var x = days[k];
+      return '<div style="flex:1;display:flex;gap:1px;align-items:flex-end;height:100%">' +
+        '<div class="bar" style="height:'+Math.round(100*x.v/max)+'%" data-tip="'+k+': '+x.v+' views"></div>' +
+        '<div class="bar clicks" style="height:'+Math.round(100*x.c/max)+'%" data-tip="'+k+': '+x.c+' clicks/scans"></div></div>';
+    }).join('');
+
+    $('byPage').innerHTML = (d.by_page||[]).map(function(r){ return '<tr><td>'+(r.page||'(unknown)')+'</td><td class="n">'+fmt(r.n)+'</td></tr>'; }).join('') || '<tr><td colspan="2">No clicks recorded yet</td></tr>';
+    $('byRef').innerHTML = (d.by_referrer||[]).map(function(r){ return '<tr><td>'+r.referrer+'</td><td class="n">'+fmt(r.n)+'</td></tr>'; }).join('') || '<tr><td colspan="2">No scans recorded yet</td></tr>';
+    $('since').textContent = d.first_event ? 'Tracking since ' + new Date(d.first_event.replace(' ','T')+'Z').toLocaleString('en-GB') + ' · updated ' + new Date(d.generated_at).toLocaleTimeString('en-GB') : 'No events recorded yet';
+  }
+
+  function load(key){
+    return fetch('/api/stats/donate', { headers: { 'x-stats-key': key } })
+      .then(function(r){ if (!r.ok) throw new Error('bad'); return r.json(); })
+      .then(function(d){ render(d); $('gate').classList.add('hidden'); $('report').classList.remove('hidden'); try { localStorage.setItem(KEY_LS, key); } catch(e){} })
+      .catch(function(){ $('gateErr').textContent = 'That key was not accepted.'; $('gate').classList.remove('hidden'); $('report').classList.add('hidden'); });
+  }
+
+  $('go').onclick = function(){ load($('key').value.trim()); };
+  $('key').addEventListener('keydown', function(e){ if (e.key==='Enter') $('go').click(); });
+  $('refresh').onclick = function(){ var k; try { k = localStorage.getItem(KEY_LS); } catch(e){} if (k) load(k); };
+  $('forget').onclick = function(){ try { localStorage.removeItem(KEY_LS); } catch(e){} location.reload(); };
+  var saved = null; try { saved = localStorage.getItem(KEY_LS); } catch(e){}
+  if (saved) load(saved);
+})();
+</script>
+</body>
+</html>

@@ -78,6 +78,17 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_news_posts_published_at ON news_posts(published_at);
 
+  CREATE TABLE IF NOT EXISTS donate_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event TEXT NOT NULL,              -- 'donate_view' | 'donate_click' | 'give_redirect'
+    page TEXT,
+    referrer TEXT,
+    ip_hash TEXT,
+    user_agent TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_donate_events_created ON donate_events(created_at);
+
   CREATE INDEX IF NOT EXISTS idx_submissions_form_type ON submissions(form_type);
   CREATE INDEX IF NOT EXISTS idx_submissions_submitted_at ON submissions(submitted_at);
 `);
@@ -886,6 +897,50 @@ app.delete('/api/admin/news/:id', requireAuth, (req, res) => {
 });
 
 // Health check
+
+// ---------- Donation funnel tracking (private) ----------
+// The public site reports anonymous events (page view / button click / QR short-link hit).
+// Totals are visible only at /stats with the STATS_KEY set in the environment.
+const STATS_KEY = process.env.STATS_KEY || '';
+const DONATE_EVENTS = new Set(['donate_view','donate_click','give_redirect']);
+const trackBuckets = new Map();
+app.post('/api/track', (req, res) => {
+  try {
+    const b = req.body || {};
+    const event = String(b.event || '');
+    if (!DONATE_EVENTS.has(event)) return res.status(400).json({ ok:false });
+    const ip = getClientIp(req);
+    const now = Date.now();
+    const tb = trackBuckets.get(ip);
+    if (tb && tb.resetAt > now && tb.count > 60) return res.json({ ok:true });
+    if (!tb || tb.resetAt < now) trackBuckets.set(ip, { count:1, resetAt: now + 3600e3 }); else tb.count++;
+    const ipHash = require('crypto').createHash('sha256').update(ip + JWT_SECRET).digest('hex').slice(0, 16);
+    db.prepare('INSERT INTO donate_events (event, page, referrer, ip_hash, user_agent) VALUES (?,?,?,?,?)')
+      .run(event, String(b.page || '').slice(0, 200), String(b.ref || '').slice(0, 300), ipHash, String(req.headers['user-agent'] || '').slice(0, 300));
+    res.json({ ok:true });
+  } catch (e) { res.json({ ok:true }); }
+});
+app.get('/api/stats/donate', (req, res) => {
+  const key = String(req.query.key || req.headers['x-stats-key'] || '');
+  if (!STATS_KEY || key !== STATS_KEY) return res.status(404).end();
+  const one = (sql, ...a) => db.prepare(sql).get(...a);
+  const all = (sql, ...a) => db.prepare(sql).all(...a);
+  const byEvent = (since) => {
+    const rows = all(`SELECT event, COUNT(*) n, COUNT(DISTINCT ip_hash) uniq FROM donate_events WHERE created_at >= datetime('now', ?) GROUP BY event`, since);
+    const o = {}; for (const r of rows) o[r.event] = { count: r.n, unique: r.uniq }; return o;
+  };
+  res.json({
+    ok: true,
+    generated_at: new Date().toISOString(),
+    totals: { all_time: byEvent('-100 years'), last_24h: byEvent('-1 day'), last_7d: byEvent('-7 days'), last_30d: byEvent('-30 days') },
+    by_day: all(`SELECT date(created_at) day, event, COUNT(*) n FROM donate_events WHERE created_at >= datetime('now','-30 days') GROUP BY day, event ORDER BY day`),
+    by_page: all(`SELECT page, COUNT(*) n FROM donate_events WHERE event='donate_click' GROUP BY page ORDER BY n DESC LIMIT 20`),
+    by_referrer: all(`SELECT COALESCE(NULLIF(referrer,''),'(direct / QR)') referrer, COUNT(*) n FROM donate_events WHERE event='give_redirect' GROUP BY referrer ORDER BY n DESC LIMIT 20`),
+    first_event: (one(`SELECT MIN(created_at) t FROM donate_events`) || {}).t || null,
+  });
+});
+app.get('/stats', (req, res) => res.sendFile(path.join(__dirname, 'public', 'stats.html')));
+
 app.get('/api/health', (req, res) => res.json({ ok:true, time: new Date().toISOString() }));
 
 // Root serves admin login page
