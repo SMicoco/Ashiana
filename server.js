@@ -781,6 +781,10 @@ async function fetchFallbackNews(){
       const seen = new Set();
       merged = merged.filter(it => { const k = it.title.toLowerCase().replace(/\s+/g,' ').slice(0, 80); if (seen.has(k)) return false; seen.add(k); return true; });
       merged = merged.filter(it => Date.parse(it.pubDate));
+      // Keep only stories clearly about Ashiana's areas of work.
+      const REL = /(domestic (abuse|violence)|abus(e|ive|er)|refuge|forced marriage|female genital|fgm|honou?r[- ]based|trafficking|traffick(ed|ers?)|modern slavery|violence against women|coercive control|survivor|women's aid|safeguarding|asylum|refugee women|bame|bamer|minority ethnic)/i;
+      const OFF = /(tate|south sudan|church|football|celebrity|film|tv series|netflix|cricket|rugby)/i;
+      merged = merged.filter(it => REL.test(it.title + ' ' + it.summary) && !OFF.test(it.title));
       merged.sort((a, b) => Date.parse(b.pubDate) - Date.parse(a.pubDate));
       if (merged.length >= 6) break;
     }
