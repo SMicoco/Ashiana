@@ -706,7 +706,7 @@ app.post('/api/ask', async (req, res) => {
 
 // In-memory cache for the external news fallback so we don't hammer Google News on every request.
 let _fallbackNewsCache = { time: 0, items: [] };
-const _FALLBACK_CACHE_MS = 30 * 60 * 1000; // 30 minutes
+const _FALLBACK_CACHE_MS = 15 * 60 * 1000; // 15 minutes
 // Neutral, topic-relevant search queries. Rotates each cache cycle so the page stays fresh.
 const _FALLBACK_QUERIES = [
   'domestic abuse UK refuge',
@@ -736,47 +736,57 @@ function _decodeEntities(s){
   return s.replace(/\s{2,}/g, ' ').trim();
 }
 
+async function _fetchGoogleNews(q, maxItems){
+  const url = 'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-GB&gl=GB&ceid=GB:en';
+  const res = await fetch(url, { headers: { 'User-Agent': 'AshianaNewsBot/1.0' } });
+  if (!res.ok) throw new Error('upstream ' + res.status);
+  const xml = await res.text();
+  const items = [];
+  const itemRegex = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = itemRegex.exec(xml)) !== null && items.length < maxItems) {
+    const block = m[1];
+    const titleM = block.match(/<title>([\s\S]*?)<\/title>/);
+    const linkM = block.match(/<link>([\s\S]*?)<\/link>/);
+    const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
+    const descM = block.match(/<description>([\s\S]*?)<\/description>/);
+    if (!titleM || !linkM) continue;
+    items.push({
+      title: _decodeEntities(titleM[1]).slice(0, 200),
+      link: _decodeEntities(linkM[1]).trim(),
+      pubDate: dateM ? dateM[1].trim() : '',
+      summary: _stripHtml(_decodeEntities(descM ? descM[1] : '')).slice(0, 240),
+      content: '',
+      author: null,
+      images: [],
+    });
+  }
+  return items;
+}
+
 async function fetchFallbackNews(){
   if (Date.now() - _fallbackNewsCache.time < _FALLBACK_CACHE_MS && _fallbackNewsCache.items.length) {
     return _fallbackNewsCache.items;
   }
-  // Pick a query that rotates predictably so the same hour returns the same query
-  const idx = Math.floor(Date.now() / _FALLBACK_CACHE_MS) % _FALLBACK_QUERIES.length;
-  const q = _FALLBACK_QUERIES[idx];
-  const url = 'https://news.google.com/rss/search?q=' + encodeURIComponent(q) + '&hl=en-GB&gl=GB&ceid=GB:en';
   try {
-    const res = await fetch(url, { headers: { 'User-Agent': 'AshianaNewsBot/1.0' } });
-    if (!res.ok) throw new Error('upstream ' + res.status);
-    const xml = await res.text();
-    const items = [];
-    const itemRegex = /<item>([\s\S]*?)<\/item>/g;
-    let m;
-    while ((m = itemRegex.exec(xml)) !== null && items.length < 6) {
-      const block = m[1];
-      const titleM = block.match(/<title>([\s\S]*?)<\/title>/);
-      const linkM = block.match(/<link>([\s\S]*?)<\/link>/);
-      const dateM = block.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
-      const descM = block.match(/<description>([\s\S]*?)<\/description>/);
-      if (!titleM || !linkM) continue;
-      items.push({
-        id: 'g' + items.length,
-        title: _decodeEntities(titleM[1]).slice(0, 200),
-        link: _decodeEntities(linkM[1]).trim(),
-        pubDate: dateM ? dateM[1].trim() : '',
-        summary: _stripHtml(_decodeEntities(descM ? descM[1] : '')).slice(0, 240),
-        content: '',
-        author: null,
-        images: [],
-      });
+    // Query every topic for RECENT coverage (Google News "when:" operator), merge,
+    // de-duplicate and keep the newest six. Falls back to a wider window if the
+    // last fortnight is quiet.
+    const windows = ['14d', '60d'];
+    let merged = [];
+    for (const w of windows) {
+      const results = await Promise.allSettled(_FALLBACK_QUERIES.map(q => _fetchGoogleNews(q + ' when:' + w, 20)));
+      merged = [];
+      for (const r of results) if (r.status === 'fulfilled') merged.push(...r.value);
+      const seen = new Set();
+      merged = merged.filter(it => { const k = it.title.toLowerCase().replace(/\s+/g,' ').slice(0, 80); if (seen.has(k)) return false; seen.add(k); return true; });
+      merged = merged.filter(it => Date.parse(it.pubDate));
+      merged.sort((a, b) => Date.parse(b.pubDate) - Date.parse(a.pubDate));
+      if (merged.length >= 6) break;
     }
-    // Sort newest first
-    items.sort(function(a,b){
-      var ta = Date.parse(a.pubDate) || 0;
-      var tb = Date.parse(b.pubDate) || 0;
-      return tb - ta;
-    });
-    _fallbackNewsCache = { time: Date.now(), items };
-    return items;
+    const items = merged.slice(0, 6).map((it, i) => Object.assign({ id: 'g' + i }, it));
+    if (items.length) _fallbackNewsCache = { time: Date.now(), items };
+    return items.length ? items : (_fallbackNewsCache.items || []);
   } catch (e) {
     console.warn('Fallback news fetch failed:', e.message);
     return _fallbackNewsCache.items || [];
