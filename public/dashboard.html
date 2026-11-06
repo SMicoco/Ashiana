@@ -212,6 +212,8 @@
 </div>
 
 <script>
+document.addEventListener("DOMContentLoaded",function(){document.querySelectorAll(".modal").forEach(function(m){m.addEventListener("click",function(e){e.stopPropagation();});});});
+document.addEventListener("click",function(e){if(e.target.closest&&e.target.closest("td a, .modal a"))e.stopPropagation();},true);
 let currentForm = 'compliment';
 let page = 1;
 const pageSize = 25;
@@ -264,13 +266,13 @@ async function load(){
       const detailsBits = [];
       if (role) detailsBits.push('<div>' + escapeHtml(role) + '</div>');
       if (isCareerForm && row.cv_filename) {
-        detailsBits.push('<div style="margin-top:4px"><a href="/api/admin/submissions/' + row.id + '/cv" target="_blank" style="color:var(--burgundy);font-weight:600;font-size:.85rem" onclick="event.stopPropagation()">&#8595; CV: ' + escapeHtml(row.cv_filename.length > 28 ? row.cv_filename.slice(0,25)+'...' : row.cv_filename) + '</a></div>');
+        detailsBits.push('<div style="margin-top:4px"><a href="/api/admin/submissions/' + row.id + '/cv" target="_blank" style="color:var(--burgundy);font-weight:600;font-size:.85rem">&#8595; CV: ' + escapeHtml(row.cv_filename.length > 28 ? row.cv_filename.slice(0,25)+'...' : row.cv_filename) + '</a></div>');
       }
       if (isCareerForm && row.cv_link) {
-        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.cv_link) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem" onclick="event.stopPropagation()">CV link</a></div>');
+        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.cv_link) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem">CV link</a></div>');
       }
       if (isCareerForm && row.linkedin_url) {
-        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.linkedin_url) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem" onclick="event.stopPropagation()">LinkedIn &#8599;</a></div>');
+        detailsBits.push('<div style="margin-top:2px"><a href="' + escapeHtml(row.linkedin_url) + '" target="_blank" style="color:var(--burgundy);font-size:.85rem">LinkedIn &#8599;</a></div>');
       }
       return `
       <tr class="${row.is_read ? '' : 'unread'}" data-id="${row.id}">

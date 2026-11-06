@@ -17,6 +17,11 @@ const jwt          = require('jsonwebtoken');
 const Database     = require('better-sqlite3');
 const path         = require('path');
 const fs           = require('fs');
+const crypto       = require('crypto');
+let   helmet       = null;
+try   { helmet       = require('helmet'); } catch { /* headers middleware absent: fallback below */ }
+let   rateLimit    = null;
+try   { rateLimit    = require('express-rate-limit').rateLimit; } catch { /* rate limiting absent: fallback below */ }
 let   Anthropic    = null;
 try   { Anthropic   = require('@anthropic-ai/sdk').default || require('@anthropic-ai/sdk').Anthropic; }
 catch { /* SDK absent: /api/ask returns a friendly error */ }
@@ -28,7 +33,11 @@ try   { Resend       = require('resend').Resend; }
 catch { /* SDK absent: notifications will fall back to FormSubmit */ }
 
 const PORT       = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || 'change-me-to-a-long-random-string';
+// Never run with a guessable session secret. If none is configured, generate a
+// strong random one for this process (sessions reset on restart) and say so.
+const JWT_SECRET = (process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32)
+  ? process.env.JWT_SECRET
+  : (console.warn('SECURITY: JWT_SECRET missing or too short; using a random per-process secret'), crypto.randomBytes(48).toString('hex'));
 const DB_PATH    = process.env.DB_PATH || path.join(__dirname, 'ashiana.db');
 const ALLOWED    = (process.env.ALLOWED_ORIGINS || '').split(',').filter(Boolean);
 const COOKIE_NAME = 'ashiana_admin';
@@ -125,7 +134,12 @@ ensureColumn('news_posts', 'images', 'TEXT'); // JSON array of {filename, stored
 const adminCount = db.prepare('SELECT COUNT(*) AS n FROM admins').get().n;
 if (adminCount === 0) {
   const defaultUser = process.env.ADMIN_USERNAME || 'admin';
-  const defaultPass = process.env.ADMIN_PASSWORD || 'changeme123';
+  // No weak fallback password: if none is configured, generate one and log it once.
+  const defaultPass = process.env.ADMIN_PASSWORD || (function(){
+    const p = crypto.randomBytes(12).toString('base64url');
+    console.warn('SECURITY: ADMIN_PASSWORD not set; generated initial admin password:', p);
+    return p;
+  })();
   const hash = bcrypt.hashSync(defaultPass, 12);
   db.prepare('INSERT INTO admins (username, password_hash, full_name) VALUES (?, ?, ?)')
     .run(defaultUser, hash, 'Ashiana Admin');
@@ -136,6 +150,75 @@ if (adminCount === 0) {
 // ---------- App setup ----------
 const app = express();
 app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+// ---------- Security headers ----------
+// The admin pages use inline scripts/styles, so CSP allows 'unsafe-inline' for
+// those but blocks everything else: no third-party scripts, no framing, no
+// mixed content, no plugins.
+const CSP = {
+  "default-src": ["'self'"],
+  "script-src": ["'self'", "'unsafe-inline'"],
+  "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+  "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],
+  "img-src": ["'self'", "data:", "blob:"],
+  "connect-src": ["'self'"],
+  "frame-ancestors": ["'none'"],
+  "form-action": ["'self'"],
+  "base-uri": ["'self'"],
+  "object-src": ["'none'"],
+  "upgrade-insecure-requests": [],
+};
+if (helmet) {
+  app.use(helmet({
+    contentSecurityPolicy: { directives: CSP },
+    crossOriginEmbedderPolicy: false,
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // news images are shown on the public site
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    hsts: { maxAge: 31536000, includeSubDomains: true, preload: true },
+    frameguard: { action: 'deny' },
+  }));
+} else {
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
+}
+app.use((req, res, next) => { res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()'); next(); });
+
+// ---------- Rate limiting ----------
+// Generous global ceiling per IP, tighter limits on anything that writes or
+// authenticates. Limits are per IP (trust proxy is set, so the real client IP
+// is used behind Render's load balancer).
+function makeLimiter(windowMs, max, message) {
+  if (rateLimit) return rateLimit({ windowMs, max, standardHeaders: 'draft-7', legacyHeaders: false, message: { ok:false, error: message } });
+  const hits = new Map();
+  return (req, res, next) => {
+    const ip = getClientIp(req); const now = Date.now();
+    const b = hits.get(ip);
+    if (!b || b.resetAt < now) { hits.set(ip, { count: 1, resetAt: now + windowMs }); return next(); }
+    if (++b.count > max) return res.status(429).json({ ok:false, error: message });
+    next();
+  };
+}
+app.use('/api/', makeLimiter(15 * 60 * 1000, 600, 'Too many requests, please try again shortly.'));
+const loginLimiter  = makeLimiter(15 * 60 * 1000, 10, 'Too many sign-in attempts. Please wait 15 minutes.');
+const submitLimiter = makeLimiter(60 * 60 * 1000, 15, 'Too many submissions from this connection. Please try again later.');
+const adminWriteLimiter = makeLimiter(15 * 60 * 1000, 120, 'Too many changes in a short time.');
+
+// ---------- Input hygiene ----------
+// Strip control characters and trim; keeps letters in every script intact.
+function clean(v, max) {
+  return String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '').trim().slice(0, max);
+}
+const EMAIL_RE = /^[^\s@]{1,64}@[^\s@]{1,255}\.[^\s@]{2,}$/;
+function looksLikeSpam(text) {
+  const links = (String(text || '').match(/https?:\/\//gi) || []).length;
+  return links > 3;
+}
 app.use(express.json({ limit: '200kb' }));
 app.use(express.urlencoded({ extended: true, limit: '200kb' }));
 app.use(cookieParser());
@@ -180,6 +263,24 @@ const cvUploader = multer ? multer({
     cb(ok ? null : new Error('Unsupported file type'), ok);
   }
 }) : null;
+
+// Verify an uploaded file really is what its extension claims (magic bytes),
+// so a renamed executable or script can never be stored.
+function sniffOk(filePath, kind) {
+  let fd; try {
+    fd = fs.openSync(filePath, 'r'); const b = Buffer.alloc(12); fs.readSync(fd, b, 0, 12, 0);
+    const hex = b.toString('hex');
+    if (kind === 'image') return hex.startsWith('ffd8ff') || hex.startsWith('89504e47') || hex.startsWith('47494638') || (hex.startsWith('52494646') && b.toString('ascii', 8, 12) === 'WEBP');
+    if (kind === 'doc')   return hex.startsWith('25504446') /*pdf*/ || hex.startsWith('504b0304') /*docx/odt*/ || hex.startsWith('d0cf11e0') /*doc*/ || hex.startsWith('7b5c7274') /*rtf*/;
+    return false;
+  } catch (e) { return false; } finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+function rejectBadUpload(file, kind) {
+  if (!file) return false;
+  const isTxt = /\.txt$/i.test(file.originalname || '');
+  if (!isTxt && !sniffOk(file.path, kind)) { try { fs.unlinkSync(file.path); } catch(_){} return true; }
+  return false;
+}
 
 // ---- News post image uploads ----
 const NEWS_IMG_DIR = process.env.NEWS_IMG_DIR || (DB_PATH.endsWith('.db') ? path.dirname(DB_PATH) + '/news_images' : path.join(__dirname, 'news_images'));
@@ -340,7 +441,7 @@ async function notifyByEmail(formType, data) {
 
 // POST /api/submit  (called by the website forms)
 // Body: form_type, name, email, telephone, position|stage, message, outcome
-app.post('/api/submit', (req, res) => {
+app.post('/api/submit', submitLimiter, (req, res) => {
   const body = req.body || {};
   const formType = (body.form_type || '').toLowerCase();
   if (!VALID_FORMS.has(formType)) {
@@ -349,10 +450,14 @@ app.post('/api/submit', (req, res) => {
   // Honeypot: any value in _honey means bot submission, silently accept and drop
   if (body._honey) return res.json({ ok:true });
 
-  // Light validation
-  if (!body.name || !body.message) {
+  // Validation
+  if (!clean(body.name, 200) || !clean(body.message, 8000)) {
     return res.status(400).json({ ok:false, error:'Name and message are required' });
   }
+  if (body.email && !EMAIL_RE.test(clean(body.email, 200))) {
+    return res.status(400).json({ ok:false, error:'Please enter a valid email address' });
+  }
+  if (looksLikeSpam(body.message)) return res.json({ ok:true }); // silently drop link-stuffed spam
 
   const stmt = db.prepare(`
     INSERT INTO submissions
@@ -362,13 +467,13 @@ app.post('/api/submit', (req, res) => {
   `);
   const info = stmt.run({
     form_type: formType,
-    name:      String(body.name      || '').slice(0, 200),
-    email:     String(body.email     || '').slice(0, 200),
-    telephone: String(body.telephone || '').slice(0, 50),
-    position:  String(body.position  || '').slice(0, 100),
-    stage:     String(body.stage     || '').slice(0, 100),
-    message:   String(body.message   || '').slice(0, 8000),
-    outcome:   String(body.outcome   || '').slice(0, 4000),
+    name:      clean(body.name, 200),
+    email:     clean(body.email, 200),
+    telephone: clean(body.telephone, 50),
+    position:  clean(body.position, 100),
+    stage:     clean(body.stage, 100),
+    message:   clean(body.message, 8000),
+    outcome:   clean(body.outcome, 4000),
     ip:        getClientIp(req).slice(0, 64),
     ua:        String(req.headers['user-agent'] || '').slice(0, 400),
   });
@@ -386,7 +491,7 @@ app.post('/api/submit', (req, res) => {
 const CAREER_FORMS = new Set(['career','volunteer','student']);
 const careerSubmitMiddleware = cvUploader ? cvUploader.single('cv') : (req,res,next) => next();
 
-app.post('/api/submit/career', careerSubmitMiddleware, (req, res) => {
+app.post('/api/submit/career', submitLimiter, careerSubmitMiddleware, (req, res) => {
   try {
     const body = req.body || {};
     // Multer turns duplicate field names into arrays; coerce to a single string.
@@ -397,6 +502,7 @@ app.post('/api/submit/career', careerSubmitMiddleware, (req, res) => {
     if (!body.name) return res.status(400).json({ ok:false, error:'Name is required' });
 
     const file = req.file || null;
+    if (rejectBadUpload(file, 'doc')) return res.status(400).json({ ok:false, error:'The uploaded file does not appear to be a valid document.' });
     // Combine experience/languages/hours into the skills column so nothing is dropped
     const skillsParts = [];
     if (body.skills)      skillsParts.push(String(body.skills));
@@ -459,37 +565,55 @@ app.post('/api/submit/career', careerSubmitMiddleware, (req, res) => {
 app.get('/api/admin/submissions/:id/cv', requireAuth, (req, res) => {
   const row = db.prepare('SELECT cv_filename, cv_storedname FROM submissions WHERE id = ?').get(req.params.id);
   if (!row || !row.cv_storedname) return res.status(404).send('No CV stored for this submission');
+  if (!/^[\w.\-]+$/.test(row.cv_storedname)) return res.status(400).send('Bad file reference');
   const filePath = path.join(UPLOAD_DIR, row.cv_storedname);
-  if (!fs.existsSync(filePath)) return res.status(404).send('CV file is missing on disk');
+  if (!filePath.startsWith(UPLOAD_DIR) || !fs.existsSync(filePath)) return res.status(404).send('CV file is missing on disk');
   res.download(filePath, row.cv_filename || row.cv_storedname);
 });
 
 
 // ---------- Admin auth ----------
 
-app.post('/api/admin/login', (req, res) => {
-  const { username, password } = req.body || {};
-  if (!username || !password) {
+// Account lockout: 5 failed attempts on a username locks it for 15 minutes,
+// independent of IP, so credential-stuffing from many addresses is also stopped.
+const loginFailures = new Map(); // username -> { count, lockedUntil }
+const DUMMY_HASH = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 12);
+app.post('/api/admin/login', loginLimiter, (req, res) => {
+  const username = clean((req.body || {}).username, 100);
+  const password = String((req.body || {}).password || '');
+  if (!username || !password || password.length > 200) {
     return res.status(400).json({ ok:false, error:'Username and password required' });
   }
+  const f = loginFailures.get(username);
+  if (f && f.lockedUntil > Date.now()) {
+    return res.status(429).json({ ok:false, error:'Account temporarily locked after repeated failed sign-ins. Try again in 15 minutes.' });
+  }
   const row = db.prepare('SELECT id, username, password_hash, full_name FROM admins WHERE username = ?').get(username);
-  if (!row) return res.status(401).json({ ok:false, error:'Invalid credentials' });
-
-  const ok = bcrypt.compareSync(password, row.password_hash);
-  if (!ok)  return res.status(401).json({ ok:false, error:'Invalid credentials' });
+  // Always run a bcrypt comparison so a missing user takes as long as a wrong password.
+  const ok = bcrypt.compareSync(password, row ? row.password_hash : DUMMY_HASH) && !!row;
+  if (!ok) {
+    const rec = loginFailures.get(username) || { count: 0, lockedUntil: 0 };
+    rec.count += 1;
+    if (rec.count >= 5) { rec.lockedUntil = Date.now() + 15 * 60 * 1000; rec.count = 0; }
+    loginFailures.set(username, rec);
+    console.warn('AUTH: failed sign-in for', JSON.stringify(username), 'from', getClientIp(req));
+    return res.status(401).json({ ok:false, error:'Invalid credentials' });
+  }
+  loginFailures.delete(username);
 
   const token = signSession({ id: row.id, username: row.username });
   res.cookie(COOKIE_NAME, token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'lax',
+    secure: process.env.NODE_ENV !== 'development',
+    sameSite: 'strict',
     maxAge: ONE_WEEK_MS,
+    path: '/',
   });
   return res.json({ ok:true, username: row.username, fullName: row.full_name });
 });
 
 app.post('/api/admin/logout', (req, res) => {
-  res.clearCookie(COOKIE_NAME);
+  res.clearCookie(COOKIE_NAME, { path: '/' });
   return res.json({ ok:true });
 });
 
@@ -499,8 +623,9 @@ app.get('/api/admin/me', requireAuth, (req, res) => {
 
 app.post('/api/admin/change-password', requireAuth, (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword || newPassword.length < 8) {
-    return res.status(400).json({ ok:false, error:'New password must be at least 8 characters' });
+  if (!currentPassword || !newPassword || newPassword.length < 12 || newPassword.length > 200
+      || !/[a-z]/.test(newPassword) || !/[A-Z0-9]/.test(newPassword)) {
+    return res.status(400).json({ ok:false, error:'New password must be at least 12 characters and mix lower-case with upper-case letters or numbers' });
   }
   const row = db.prepare('SELECT password_hash FROM admins WHERE id = ?').get(req.admin.id);
   if (!row) return res.status(404).json({ ok:false, error:'Admin not found' });
@@ -835,6 +960,8 @@ app.get('/api/news-image/:name', (req, res) => {
   const filePath = path.join(NEWS_IMG_DIR, name);
   if (!fs.existsSync(filePath)) return res.status(404).send('Not found');
   res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Disposition', 'inline');
   res.sendFile(filePath);
 });
 
@@ -848,7 +975,8 @@ app.get('/api/admin/news', requireAuth, (req, res) => {
 });
 const newsImagesMiddleware = newsImageUploader ? newsImageUploader.array('images', 6) : (req,res,next) => next();
 
-app.post('/api/admin/news', requireAuth, newsImagesMiddleware, (req, res) => {
+app.post('/api/admin/news', adminWriteLimiter, requireAuth, newsImagesMiddleware, (req, res) => {
+  for (const f of (req.files || [])) { if (rejectBadUpload(f, 'image')) return res.status(400).json({ ok:false, error:'One of the images is not a valid image file.' }); }
   const b = req.body || {};
   if (!b.title || !b.content) return res.status(400).json({ ok:false, error:'Title and content are required' });
   const imageMeta = (req.files || []).map(f => ({
@@ -959,6 +1087,15 @@ app.get('/api/health', (req, res) => res.json({ ok:true, time: new Date().toISOS
 
 // Root serves admin login page
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
+
+// Unknown API routes answer in JSON; all errors answer generically (no stack traces).
+app.use('/api', (req, res) => res.status(404).json({ ok:false, error:'Not found' }));
+app.use((err, req, res, next) => {
+  const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 413 : 500);
+  if (status >= 500) console.error('Unhandled error:', err.message);
+  const msg = status === 413 ? (err.code === 'LIMIT_FILE_SIZE' ? 'File too large' : 'Request too large') : (status === 400 ? 'Bad request' : (err.message && /Unsupported|not allowed/i.test(err.message) ? err.message : 'Something went wrong'));
+  res.status(status).json({ ok:false, error: msg });
+});
 
 app.listen(PORT, () => {
   console.log('Ashiana backend listening on port', PORT);
